@@ -1,0 +1,176 @@
+syntax = "proto3";
+
+package wallet;
+
+option go_package = "game_product/shared/proto/wallet";
+
+import "google/protobuf/timestamp.proto";
+
+// Wallet Service
+service WalletService {
+  rpc CreateWallet(CreateWalletReq) returns (CreateWalletRsp);
+  rpc GetWallet(GetWalletReq) returns (GetWalletRsp);
+  rpc GetBalance(GetBalanceReq) returns (GetBalanceRsp);
+  rpc Deposit(DepositReq) returns (DepositRsp);
+  rpc Withdraw(WithdrawReq) returns (WithdrawRsp);
+  rpc PlaceBet(PlaceBetReq) returns (PlaceBetRsp);
+  rpc SettleWin(SettleWinReq) returns (SettleWinRsp);
+  rpc Rollback(RollbackReq) returns (RollbackRsp);
+  rpc GetTransactionHistory(GetTransactionHistoryReq) returns (GetTransactionHistoryRsp);
+}
+
+// Wallet message
+message Wallet {
+  int64 wallet_id = 1;
+  int64 player_id = 2;
+  int64 balance = 3; // in cents
+  string currency = 4;
+  int64 version = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// Transaction message
+message Transaction {
+  string tx_id = 1;
+  int64 wallet_id = 2;
+  string type = 3; // deposit, withdraw, bet, win, rollback
+  int64 amount = 4;
+  int64 balance_before = 5;
+  int64 balance_after = 6;
+  string game_round_id = 7;
+  string status = 8; // pending, completed, failed, rolled_back
+  string metadata = 9; // JSON
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp completed_at = 11;
+}
+
+// Create Wallet
+message CreateWalletReq {
+  int64 player_id = 1;
+  string currency = 2;
+  int64 initial_balance = 3;
+}
+
+message CreateWalletRsp {
+  Wallet wallet = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Get Wallet
+message GetWalletReq {
+  int64 wallet_id = 1;
+  int64 player_id = 2; // Optional: get by player_id
+}
+
+message GetWalletRsp {
+  Wallet wallet = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Get Balance
+message GetBalanceReq {
+  int64 player_id = 1;
+}
+
+message GetBalanceRsp {
+  int64 balance = 1;
+  string currency = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+// Deposit
+message DepositReq {
+  int64 player_id = 1;
+  int64 amount = 2;
+  string tx_id = 3; // For idempotency
+  string metadata = 4; // JSON: payment method, reference, etc.
+}
+
+message DepositRsp {
+  Transaction transaction = 1;
+  int64 new_balance = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+// Withdraw
+message WithdrawReq {
+  int64 player_id = 1;
+  int64 amount = 2;
+  string tx_id = 3; // For idempotency
+  string metadata = 4; // JSON: withdrawal method, account, etc.
+}
+
+message WithdrawRsp {
+  Transaction transaction = 1;
+  int64 new_balance = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+// Place Bet (Deduct balance)
+message PlaceBetReq {
+  int64 player_id = 1;
+  int64 amount = 2;
+  string game_round_id = 3;
+  string tx_id = 4; // For idempotency
+  string metadata = 5; // JSON: game type, bet details, etc.
+}
+
+message PlaceBetRsp {
+  Transaction transaction = 1;
+  int64 new_balance = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+// Settle Win (Credit winnings)
+message SettleWinReq {
+  int64 player_id = 1;
+  int64 amount = 2;
+  string game_round_id = 3;
+  string tx_id = 4; // For idempotency
+  string metadata = 5; // JSON: game result, multiplier, etc.
+}
+
+message SettleWinRsp {
+  Transaction transaction = 1;
+  int64 new_balance = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+// Rollback (Reverse a transaction)
+message RollbackReq {
+  string original_tx_id = 1;
+  string rollback_tx_id = 2; // New transaction ID for the rollback
+  string reason = 3;
+}
+
+message RollbackRsp {
+  Transaction rollback_transaction = 1;
+  int64 new_balance = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+// Get Transaction History
+message GetTransactionHistoryReq {
+  int64 player_id = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+  string type_filter = 4; // Optional: filter by transaction type
+  google.protobuf.Timestamp start_time = 5;
+  google.protobuf.Timestamp end_time = 6;
+}
+
+message GetTransactionHistoryRsp {
+  repeated Transaction transactions = 1;
+  int32 total_count = 2;
+  bool success = 3;
+  string message = 4;
+}

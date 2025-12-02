@@ -1,0 +1,40 @@
+{
+    // Go 基本設定
+    "go.useLanguageServer": true,
+    "go.formatTool": "gofumpt",
+    "gopls.formatting.gofumpt": true,
+    "go.lintTool": "golangci-lint",
+    "go.lintOnSave": "package",
+    "go.vetOnSave": "package",
+    "go.buildOnSave": "workspace",
+    
+    // gopls 設定（Goland 等級智能補全）
+    "gopls": {
+        "usePlaceholders": true,
+        "ui.semanticTokens": true,
+        "staticcheck": true,
+        "gofumpt": true,
+        "matcher": "Fuzzy",   // 和 Goland 的模糊搜尋很像
+        "analyses": {
+            "nilness": true,
+            "unusedparams": true,
+            "shadow": true
+        }
+    },
+
+    // 讓 VSCode 自動修復 import（像 Goland）
+    "go.addTags": {
+        "tags": "json",
+        "options": "json=omitempty"
+    },
+
+    // 讓 VS Code 編輯體驗像 Goland
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "always"
+    },
+
+    // 鍵盤體驗接近 Goland
+    "editor.suggest.snippetsPreventQuickSuggestions": false,
+    "editor.suggest.showWords": false
+}

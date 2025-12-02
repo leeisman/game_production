@@ -1,0 +1,52 @@
+package config
+
+// ColorGameConfig (formerly GameConfig)
+type ColorGameConfig struct {
+	Server   ServerConfig
+	Redis    RedisConfig
+	Database DatabaseConfig
+	Nacos    NacosConfig
+	RepoType string
+	Settings GameSettings
+}
+
+type GameSettings struct {
+	MaxPlayersPerRoom int
+}
+
+// LoadColorGameConfig loads configuration for ColorGame Service
+func LoadColorGameConfig() *ColorGameConfig {
+	redisConfig := RedisConfig{
+		Host: getEnv("REDIS_HOST", "localhost"),
+		Port: getEnv("REDIS_PORT", "6379"),
+	}
+
+	nacosConfig := NacosConfig{
+		Host:        getEnv("NACOS_HOST", "localhost"),
+		Port:        getEnv("NACOS_PORT", "8848"),
+		NamespaceID: getEnv("NACOS_NAMESPACE", "public"),
+		Group:       getEnv("NACOS_GROUP", "DEFAULT_GROUP"),
+	}
+
+	dbConfig := DatabaseConfig{
+		Host:     getEnv("COLORGAME_DB_HOST", "localhost"),
+		Port:     getEnv("COLORGAME_DB_PORT", "5432"),
+		User:     getEnv("COLORGAME_DB_USER", "postgres"),
+		Password: getEnv("COLORGAME_DB_PASSWORD", "postgres"),
+		Name:     getEnv("COLORGAME_DB_NAME", "colorgame"),
+	}
+
+	return &ColorGameConfig{
+		Server: ServerConfig{
+			Port: getEnv("GAME_SERVER_PORT", "50052"),
+			Name: "game-service",
+		},
+		Redis:    redisConfig,
+		Database: dbConfig,
+		Nacos:    nacosConfig,
+		RepoType: getEnv("COLORGAME_REPO_TYPE", "memory"),
+		Settings: GameSettings{
+			MaxPlayersPerRoom: getEnvInt("GAME_MAX_PLAYERS", 100),
+		},
+	}
+}

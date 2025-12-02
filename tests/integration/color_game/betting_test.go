@@ -1,0 +1,178 @@
+package colorgame_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"google.golang.org/protobuf/proto"
+
+	gmsLocal "github.com/frankieli/game_product/internal/modules/color_game/gms/adapter/local"
+	gmsDomain "github.com/frankieli/game_product/internal/modules/color_game/gms/domain"
+	gmsMachine "github.com/frankieli/game_product/internal/modules/color_game/gms/machine"
+	gmsUC "github.com/frankieli/game_product/internal/modules/color_game/gms/usecase"
+	gsLocal "github.com/frankieli/game_product/internal/modules/color_game/gs/adapter/local"
+
+	gsDomain "github.com/frankieli/game_product/internal/modules/color_game/gs/domain"
+	gsRepo "github.com/frankieli/game_product/internal/modules/color_game/gs/repository/memory"
+	gsUC "github.com/frankieli/game_product/internal/modules/color_game/gs/usecase"
+
+	"github.com/frankieli/game_product/internal/modules/wallet"
+)
+
+// MockBroadcaster for testing
+type MockBroadcaster struct {
+	events []proto.Message
+}
+
+func (m *MockBroadcaster) Broadcast(event proto.Message) {
+	if m.events == nil {
+		m.events = make([]proto.Message, 0)
+	}
+	m.events = append(m.events, event)
+}
+
+func (m *MockBroadcaster) SendToUser(userID int64, event proto.Message) {
+	if m.events == nil {
+		m.events = make([]proto.Message, 0)
+	}
+	m.events = append(m.events, event)
+}
+
+func TestBetting(t *testing.T) {
+	// 1. Setup GMS
+	stateMachine := gmsMachine.NewStateMachine()
+	stateMachine.BettingDuration = 500 * time.Millisecond
+	stateMachine.DrawingDuration = 100 * time.Millisecond
+	stateMachine.ResultDuration = 100 * time.Millisecond
+
+	gatewayBroadcaster := &MockBroadcaster{}
+	gsBroadcaster := &MockBroadcaster{}
+
+	// Mock GameRoundRepository for GMS
+	gameRoundRepo := &MockGameRoundRepository{}
+
+	roundUC := gmsUC.NewRoundUseCase(stateMachine, gatewayBroadcaster, gsBroadcaster, gameRoundRepo)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go stateMachine.Start(ctx)
+
+	time.Sleep(50 * time.Millisecond)
+
+	// 2. Setup GS
+	gmsHandler := gmsLocal.NewHandler(roundUC)
+	betRepo := gsRepo.NewBetRepository()
+	betOrderRepo := &MockBetOrderRepository{}
+	walletSvc := wallet.NewMockService()
+
+	gsEventBroadcaster := &MockBroadcaster{}
+	playerUC := gsUC.NewPlayerUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, gsEventBroadcaster)
+
+	_ = gsLocal.NewGSBroadcaster(playerUC)
+
+	// 3. Wait for betting state
+	var currentRoundID string
+	for i := 0; i < 20; i++ {
+		round, err := playerUC.GetCurrentRound(ctx, 1001)
+		if err == nil && round["state"] == string(gmsDomain.StateBetting) {
+			currentRoundID = round["round_id"].(string)
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if currentRoundID == "" {
+		t.Fatal("Failed to wait for Betting state")
+	}
+
+	t.Logf("Current round: %s", currentRoundID)
+
+	// 4. Test: Multiple players place bets
+	testCases := []struct {
+		userID int64
+		color  gsDomain.Color
+		amount int64
+	}{
+		{1001, gsDomain.ColorRed, 100},
+		{1002, gsDomain.ColorGreen, 200},
+		{1003, gsDomain.ColorRed, 150},
+		{1004, gsDomain.ColorBlue, 50},
+	}
+
+	// Set initial balance for all users
+	for _, tc := range testCases {
+		walletSvc.SetBalance(tc.userID, 2000) // Give enough balance
+	}
+
+	// Place initial bets
+	for _, tc := range testCases {
+		_, err := playerUC.PlaceBet(ctx, tc.userID, tc.color, tc.amount)
+		if err != nil {
+			t.Fatalf("PlaceBet failed for user %d: %v", tc.userID, err)
+		}
+		t.Logf("User %d placed bet: %s, %d", tc.userID, tc.color, tc.amount)
+	}
+
+	// 4.1 Test Accumulate Bet: User 1001 places another bet on Red
+	t.Log("Testing bet accumulation...")
+	originalBet, _ := betRepo.GetUserBet(ctx, currentRoundID, 1001, gsDomain.ColorRed)
+	originalBetID := originalBet.BetID
+
+	_, err := playerUC.PlaceBet(ctx, 1001, gsDomain.ColorRed, 50)
+	if err != nil {
+		t.Fatalf("Second PlaceBet failed for user 1001: %v", err)
+	}
+
+	// Verify accumulation
+	updatedBet, _ := betRepo.GetUserBet(ctx, currentRoundID, 1001, gsDomain.ColorRed)
+	if updatedBet.Amount != 150 { // 100 + 50
+		t.Errorf("Bet accumulation failed. Expected 150, got %d", updatedBet.Amount)
+	}
+	if updatedBet.BetID != originalBetID {
+		t.Errorf("Bet ID changed after accumulation. Expected %s, got %s", originalBetID, updatedBet.BetID)
+	}
+	t.Log("✅ Bet accumulation verified")
+
+	// 5. Verify bets are stored (checking updated amounts)
+	// User 1001 should have 150 total
+	bets, err := betRepo.GetUserBets(ctx, currentRoundID, 1001)
+	if err != nil {
+		t.Fatalf("GetUserBets failed: %v", err)
+	}
+	if len(bets) != 1 {
+		t.Errorf("Expected 1 bet record for user 1001, got %d", len(bets))
+	} else if bets[0].Amount != 150 {
+		t.Errorf("User 1001: Expected total amount 150, got %d", bets[0].Amount)
+	}
+
+	// 6. Verify wallet deduction
+	// User 1001: 100 + 50 = 150 deducted
+	balance, err := walletSvc.GetBalance(ctx, 1001)
+	if err != nil {
+		t.Fatalf("GetBalance failed: %v", err)
+	}
+	if balance != 1850 { // 2000 - 150
+		t.Errorf("User 1001: Expected balance 1850, got %d", balance)
+	}
+
+	// 7. Test GetCurrentRound returns player bets
+	round, err := playerUC.GetCurrentRound(ctx, 1001)
+	if err != nil {
+		t.Fatalf("GetCurrentRound failed: %v", err)
+	}
+	playerBets, ok := round["player_bets"].([]map[string]interface{})
+	if !ok {
+		t.Fatal("player_bets not found in round response")
+	}
+	if len(playerBets) != 1 {
+		t.Errorf("Expected 1 bet for user 1001, got %d", len(playerBets))
+	}
+	if len(playerBets) > 0 {
+		if playerBets[0]["amount"] != int64(150) {
+			t.Errorf("Expected amount 150, got %v", playerBets[0]["amount"])
+		}
+	}
+
+	t.Log("✅ Betting test passed!")
+}

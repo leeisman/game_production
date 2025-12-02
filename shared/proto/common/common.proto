@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package common;
+
+option go_package = "github.com/frankieli/game_product/shared/proto/common";
+
+enum ErrorCode {
+  SUCCESS = 0;
+  UNKNOWN_ERROR = 1;
+  INVALID_PARAMS = 2;
+  UNAUTHORIZED = 3;
+  NOT_FOUND = 4;
+  INTERNAL_ERROR = 5;
+  
+  // Auth specific
+  INVALID_CREDENTIALS = 100;
+  TOKEN_EXPIRED = 101;
+  USER_ALREADY_EXISTS = 102;
+  USER_BANNED = 103;
+  USER_SUSPENDED = 104;
+  
+  // Wallet specific
+  INSUFFICIENT_BALANCE = 200;
+  TRANSACTION_FAILED = 201;
+  
+  // Game specific
+  GAME_CLOSED = 300;
+  ROUND_NOT_ACTIVE = 301;
+  INVALID_BET_AMOUNT = 302;
+  INVALID_BET_OPTION = 303;
+  ALREADY_BET = 304;
+  ROOM_FULL = 305;
+  
+  // System
+  MAINTENANCE_MODE = 400;
+  RATE_LIMIT_EXCEEDED = 401;
+}

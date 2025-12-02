@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package user;
+
+option go_package = "github.com/frankieli/game_product/shared/proto/user";
+
+import "google/protobuf/timestamp.proto";
+import "shared/proto/common/common.proto";
+
+// User Service
+service UserService {
+  rpc Register(RegisterReq) returns (RegisterRsp);
+  rpc Login(LoginReq) returns (LoginRsp);
+  rpc Logout(LogoutReq) returns (LogoutRsp);
+  rpc ValidateToken(ValidateTokenReq) returns (ValidateTokenRsp);
+  rpc RefreshToken(RefreshTokenReq) returns (RefreshTokenRsp);
+}
+
+// Register
+message RegisterReq {
+  string username = 1;
+  string password = 2;
+  string email = 3;
+}
+
+message RegisterRsp {
+  common.ErrorCode error_code = 1;
+  int64 user_id = 2;
+  string message = 3;
+  bool success = 4;
+}
+
+// Login
+message LoginReq {
+  string username = 1;
+  string password = 2;
+}
+
+message LoginRsp {
+  common.ErrorCode error_code = 1;
+  int64 user_id = 2;
+  string token = 3;
+  string refresh_token = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  bool success = 6;
+  string message = 7;
+}
+
+// Logout
+message LogoutReq {
+  string token = 1;
+}
+
+message LogoutRsp {
+  common.ErrorCode error_code = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Validate Token
+message ValidateTokenReq {
+  string token = 1;
+}
+
+message ValidateTokenRsp {
+  common.ErrorCode error_code = 1;
+  bool valid = 2;
+  int64 user_id = 3;
+  string username = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+// Refresh Token
+message RefreshTokenReq {
+  string refresh_token = 1;
+}
+
+message RefreshTokenRsp {
+  common.ErrorCode error_code = 1;
+  string token = 2;
+  string refresh_token = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  bool success = 5;
+  string message = 6;
+}
