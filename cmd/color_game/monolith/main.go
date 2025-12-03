@@ -34,17 +34,36 @@ import (
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func main() {
-	// Initialize logger first
+	// Create logs directory if not exists
+	if err := os.MkdirAll("logs/color_game", 0o755); err != nil {
+		panic(err)
+	}
+
+	// Use lumberjack for log rotation
+	logFile := &lumberjack.Logger{
+		Filename:   "logs/color_game/monolith.log",
+		MaxSize:    100,  // megabytes
+		MaxBackups: 3,    // keep 3 old files
+		MaxAge:     28,   // days
+		Compress:   true, // compress old files
+	}
+
+	// Initialize logger
 	logger.Init(logger.Config{
-		Level:  "debug",
-		Format: "console", // Use "json" in production
+		Level:  "debug", // Ignore Debug logs, only log Info and above
+		Format: "json",  // Use JSON for file output
+		Output: logFile, // Write to rotating file
+		Async:  false,   // Enable smart async logging (Info+ are sync now)
 	})
 
+	// Also print to console that we started
+	fmt.Println("🚀 Starting Color Game Monolith... Logs are being written to logs/color_game/monolith.log (rotating)")
 	logger.InfoGlobal().Msg("🎮 Starting Color Game Monolith...")
 
 	// 1. Load Config

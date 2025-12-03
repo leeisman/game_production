@@ -7,17 +7,24 @@ import (
 	"github.com/frankieli/game_product/internal/modules/user/domain"
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/time/rate"
 )
 
 // Handler handles HTTP requests for user module
 type Handler struct {
-	svc domain.UserUseCase
+	svc             domain.UserUseCase
+	loginLimiter    *rate.Limiter
+	registerLimiter *rate.Limiter
 }
 
 // NewHandler creates a new HTTP handler
 func NewHandler(svc domain.UserUseCase) *Handler {
 	return &Handler{
 		svc: svc,
+		// Login: 100 RPS, Burst 50
+		loginLimiter: rate.NewLimiter(rate.Limit(100), 50),
+		// Register: 50 RPS, Burst 20 (Register is heavier and less frequent)
+		registerLimiter: rate.NewLimiter(rate.Limit(50), 20),
 	}
 }
 
@@ -83,6 +90,13 @@ type loginResponse struct {
 
 // Register handles user registration
 func (h *Handler) Register(c *gin.Context) {
+	// Rate Limiting Check
+	if !h.registerLimiter.Allow() {
+		logger.Warn(c.Request.Context()).Msg("Register: rate limit exceeded")
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many registration requests, please try again later"})
+		return
+	}
+
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logger.Warn(c.Request.Context()).Err(err).Msg("Register: invalid request body")
@@ -107,6 +121,13 @@ func (h *Handler) Register(c *gin.Context) {
 
 // Login handles user login
 func (h *Handler) Login(c *gin.Context) {
+	// Rate Limiting Check
+	if !h.loginLimiter.Allow() {
+		logger.Warn(c.Request.Context()).Msg("Login: rate limit exceeded")
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many login requests, please try again later"})
+		return
+	}
+
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logger.Warn(c.Request.Context()).Err(err).Msg("Login: invalid request body")

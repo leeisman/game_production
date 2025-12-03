@@ -9,6 +9,19 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+type CloseReason string
+
+const (
+	ReasonWriteError     CloseReason = "write_error"
+	ReasonPingError      CloseReason = "ping_error"
+	ReasonReadError      CloseReason = "read_error"
+	ReasonSendChanClosed CloseReason = "send_channel_closed"
+	ReasonReplaced       CloseReason = "replaced_by_new_connection"
+	ReasonShutdown       CloseReason = "server_shutdown"
+	ReasonBufferFull     CloseReason = "buffer_full"
+	ReasonTimeout        CloseReason = "timeout"
+)
+
 // Connection represents a WebSocket connection
 type Connection struct {
 	UserID    int64
@@ -40,7 +53,7 @@ func (m *Manager) Register(conn *websocket.Conn, userID int64) *Connection {
 	c := &Connection{
 		UserID:  userID,
 		Conn:    conn,
-		Send:    make(chan []byte, 256),
+		Send:    make(chan []byte, 1024),
 		manager: m,
 	}
 	m.register <- c
@@ -55,7 +68,7 @@ func (m *Manager) Run() {
 			m.mu.Lock()
 			// If user already connected, close old connection
 			if old, ok := m.clients[client.UserID]; ok {
-				old.Close()
+				old.CloseWithReason(ReasonReplaced, nil)
 			}
 			m.clients[client.UserID] = client
 			m.mu.Unlock()
@@ -64,7 +77,7 @@ func (m *Manager) Run() {
 			m.mu.Lock()
 			if _, ok := m.clients[client.UserID]; ok {
 				delete(m.clients, client.UserID)
-				client.Close()
+				client.CloseWithReason(ReasonShutdown, nil)
 			}
 			m.mu.Unlock()
 		}
@@ -80,10 +93,10 @@ func (m *Manager) Broadcast(message []byte) {
 		select {
 		case client.Send <- message:
 		default:
-			close(client.Send)
+			// Buffer full, drop client
+			client.CloseWithReason(ReasonBufferFull, nil)
 			// We can't delete here because we hold RLock
 			// The unregister channel will handle cleanup eventually
-			// or we could launch a goroutine to unregister
 		}
 	}
 }
@@ -109,8 +122,7 @@ func (m *Manager) SendToUser(userID int64, message []byte) {
 		case <-time.After(time.Second * 5):
 			// Timeout, client is too slow. Close connection to avoid blocking server.
 			// We use a background context here as we don't have the request context
-			logger.Warn(context.Background()).Int64("user_id", userID).Msg("SendToUser: buffer full and timed out, closing connection")
-			client.Close()
+			client.CloseWithReason(ReasonTimeout, nil)
 		}
 	}
 }
@@ -121,14 +133,19 @@ func (m *Manager) Shutdown() {
 	defer m.mu.Unlock()
 
 	for _, client := range m.clients {
-		client.Close()
+		client.CloseWithReason(ReasonShutdown, nil)
 	}
 }
 
-// Close closes the connection
-func (c *Connection) Close() {
+// CloseWithReason closes the connection with a reason
+func (c *Connection) CloseWithReason(r CloseReason, err error) {
 	c.closeOnce.Do(func() {
-		close(c.Send)
+		logger.Error(context.Background()).
+			Int64("user_id", c.UserID).
+			Str("reason", string(r)).
+			Err(err).
+			Msg("ws connection closed")
+		// close(c.Send) // Removed to avoid panic on concurrent send
 		c.Conn.Close()
 	})
 }
@@ -138,13 +155,15 @@ func (c *Connection) WritePump() {
 	ticker := time.NewTicker(54 * time.Second) // Ping period
 	defer func() {
 		ticker.Stop()
-		c.Conn.Close()
+		// c.Conn.Close() // Removed, handled by CloseWithReason
 	}()
 
 	for {
 		select {
 		case message, ok := <-c.Send:
-			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			// c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			// 優化讓timeout更大，但必須做因為防止attack server（故意不讀）
+			c.Conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 			if !ok {
 				// The hub closed the channel
 				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
@@ -153,17 +172,20 @@ func (c *Connection) WritePump() {
 
 			w, err := c.Conn.NextWriter(websocket.TextMessage)
 			if err != nil {
+				c.CloseWithReason(ReasonWriteError, err)
 				return
 			}
 			w.Write(message)
 
 			if err := w.Close(); err != nil {
+				c.CloseWithReason(ReasonWriteError, err)
 				return
 			}
 
 		case <-ticker.C:
 			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				c.CloseWithReason(ReasonPingError, err)
 				return
 			}
 		}
@@ -172,9 +194,10 @@ func (c *Connection) WritePump() {
 
 // ReadPump pumps messages from the websocket connection to the hub
 func (c *Connection) ReadPump(handleMessage func(int64, []byte)) {
+	var readErr error
 	defer func() {
 		c.manager.unregister <- c
-		c.Conn.Close()
+		c.CloseWithReason(ReasonReadError, readErr)
 	}()
 
 	c.Conn.SetReadLimit(4096)                                // Max message size
@@ -188,7 +211,7 @@ func (c *Connection) ReadPump(handleMessage func(int64, []byte)) {
 		_, message, err := c.Conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				// Log error
+				readErr = err
 			}
 			break
 		}

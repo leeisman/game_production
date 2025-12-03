@@ -20,10 +20,8 @@ const (
 	LoggerKey contextKey = "logger"
 )
 
-var (
-	// globalLogger is the default logger
-	globalLogger zerolog.Logger
-)
+// globalLogger is the default logger
+var globalLogger zerolog.Logger
 
 // Config holds logger configuration
 type Config struct {
@@ -31,6 +29,7 @@ type Config struct {
 	Format     string // json, console
 	Output     io.Writer
 	CallerSkip int
+	Async      bool // Enable asynchronous logging
 }
 
 // Init initializes the global logger
@@ -43,6 +42,15 @@ func Init(cfg Config) {
 	output := cfg.Output
 	if output == nil {
 		output = os.Stdout
+	}
+
+	// Wrap with AsyncWriter if enabled
+	if cfg.Async {
+		// Use LevelAsyncWriter:
+		// - Debug/Info: Async (may drop if buffer full)
+		// - Warn/Error/Fatal: Sync (never drop)
+		// Buffer size 10000 should be enough for bursts
+		output = NewLevelAsyncWriter(output, 10000)
 	}
 
 	// Customize caller marshal function to show shorter path
@@ -73,6 +81,8 @@ func Init(cfg Config) {
 	var logger zerolog.Logger
 	if cfg.Format == "console" {
 		// Console writer with colors (for development)
+		// Note: If Async is enabled, output is already an AsyncWriter wrapping stdout.
+		// We wrap it again with ConsoleWriter which writes to the AsyncWriter.
 		consoleWriter := zerolog.ConsoleWriter{
 			Out:        output,
 			TimeFormat: "2006-01-02 15:04:05.000",

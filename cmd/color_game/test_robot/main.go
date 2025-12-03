@@ -17,6 +17,7 @@ import (
 
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/gorilla/websocket"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // Config holds the robot configuration
@@ -36,7 +37,7 @@ type Robot struct {
 	Token    string
 	UserID   int64
 	Conn     *websocket.Conn
-	Done     chan struct{}
+	msgChan  chan []byte
 	ctx      context.Context
 }
 
@@ -62,7 +63,8 @@ type GameEvent struct {
 func main() {
 	// Parse command line arguments
 	host := flag.String("host", "localhost:8081", "Server host address")
-	users := flag.Int("users", 3010, "Number of concurrent users")
+	users := flag.Int("users", 4510, "Number of concurrent users")
+	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	flag.Parse()
 
 	config := Config{
@@ -72,10 +74,28 @@ func main() {
 		BetMax:    100,
 	}
 
+	// Create logs directory if not exists
+	if err := os.MkdirAll("logs/color_game", 0o755); err != nil {
+		panic(err)
+	}
+
+	// Use lumberjack for log rotation
+	logFile := &lumberjack.Logger{
+		Filename:   "logs/color_game/test_robot.log",
+		MaxSize:    100,  // megabytes
+		MaxBackups: 3,    // keep 3 old files
+		MaxAge:     28,   // days
+		Compress:   true, // compress old files
+	}
+
 	logger.Init(logger.Config{
-		Level:  "info",
-		Format: "console",
+		Level:  *logLevel,
+		Format: "json",  // Use JSON for file output
+		Output: logFile, // Write to rotating file
+		Async:  false,   // Enable smart async logging
 	})
+
+	fmt.Printf("🤖 Starting Test Robot... Logs are being written to logs/color_game/test_robot.log (rotating)\n")
 
 	ctx := context.Background()
 	logger.Info(ctx).
@@ -110,46 +130,75 @@ func NewRobot(id int, host string) *Robot {
 	return &Robot{
 		ID:       id,
 		Host:     host,
-		Username: fmt.Sprintf("robot_%d_%d", time.Now().Unix(), id), // Unique username
+		Username: fmt.Sprintf("robot_user_%d", id), // Fixed username for reuse
 		Password: "password123",
-		Done:     make(chan struct{}),
 		ctx:      context.Background(),
 	}
 }
 
 func (r *Robot) Run() error {
-	// 1. Register
-	if err := r.Register(); err != nil {
-		return fmt.Errorf("register failed: %w", err)
-	}
-	logger.Info(r.ctx).Int("robot_id", r.ID).Str("username", r.Username).Int64("user_id", r.UserID).Msg("Robot registered")
+	// 1. Try Login first
+	err := r.Login()
+	if err == nil {
+		logger.Info(r.ctx).Int("robot_id", r.ID).Msg("Login successful (existing user)")
+	} else {
+		// Login failed, try Register
+		logger.Info(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Login failed, trying to register")
 
-	// 2. Login
-	if err := r.Login(); err != nil {
-		return fmt.Errorf("login failed: %w", err)
-	}
-	logger.Info(r.ctx).Int("robot_id", r.ID).Msg("Robot logged in")
+		if err := r.Register(); err != nil {
+			return fmt.Errorf("register failed: %w", err)
+		}
+		logger.Info(r.ctx).Int("robot_id", r.ID).Str("username", r.Username).Int64("user_id", r.UserID).Msg("Robot registered")
 
-	// 3. Connect WebSocket
+		// Login again after register
+		if err := r.Login(); err != nil {
+			return fmt.Errorf("login after register failed: %w", err)
+		}
+		logger.Info(r.ctx).Int("robot_id", r.ID).Msg("Robot logged in after registration")
+	}
+
+	// 2. Connect WebSocket
 	if err := r.ConnectWS(); err != nil {
 		return fmt.Errorf("websocket connect failed: %w", err)
 	}
 	defer r.Conn.Close()
 	logger.Info(r.ctx).Int("robot_id", r.ID).Msg("Robot connected to WebSocket")
 
-	// 4. Listen and Play
-	go r.ListenLoop()
+	// 4. Start Read Pump
+	r.msgChan = make(chan []byte, 10)
+	go r.readPump()
 
-	// Keep running until done
-	<-r.Done
-	return nil
+	// 5. Event Loop
+	betTimer := time.NewTimer(0)
+	if !betTimer.Stop() {
+		<-betTimer.C
+	}
+	var currentRoundID string
+
+	for {
+		select {
+		case message, ok := <-r.msgChan:
+			if !ok {
+				return nil // Connection closed
+			}
+			r.handleMessage(message, &currentRoundID, betTimer)
+
+		case <-betTimer.C:
+			r.performBet(currentRoundID)
+
+		case <-r.ctx.Done():
+			return r.ctx.Err()
+		}
+	}
 }
 
 func (r *Robot) Register() error {
 	var err error
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ { // Retry 5 times
 		if i > 0 {
-			time.Sleep(time.Second * time.Duration(i))
+			// Random sleep 100-300ms
+			sleepMs := 100 + rand.Intn(200)
+			time.Sleep(time.Duration(sleepMs) * time.Millisecond)
 			logger.Info(r.ctx).Int("robot_id", r.ID).Int("retry", i).Msg("Retrying registration...")
 		}
 
@@ -167,6 +216,12 @@ func (r *Robot) Register() error {
 			continue
 		}
 		defer resp.Body.Close()
+
+		// Check for 429 Too Many Requests
+		if resp.StatusCode == http.StatusTooManyRequests {
+			err = fmt.Errorf("rate limited (429)")
+			continue
+		}
 
 		var result RegisterResponse
 		if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
@@ -189,14 +244,16 @@ func (r *Robot) Register() error {
 		r.UserID = result.UserID
 		return nil
 	}
-	return fmt.Errorf("register failed after 3 retries: %w", err)
+	return fmt.Errorf("register failed after 5 retries: %w", err)
 }
 
 func (r *Robot) Login() error {
 	var err error
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ { // Retry 5 times
 		if i > 0 {
-			time.Sleep(time.Second * time.Duration(i))
+			// Random sleep 100-300ms
+			sleepMs := 100 + rand.Intn(200)
+			time.Sleep(time.Duration(sleepMs) * time.Millisecond)
 			logger.Info(r.ctx).Int("robot_id", r.ID).Int("retry", i).Msg("Retrying login...")
 		}
 
@@ -214,6 +271,12 @@ func (r *Robot) Login() error {
 		}
 		defer resp.Body.Close()
 
+		// Check for 429 Too Many Requests
+		if resp.StatusCode == http.StatusTooManyRequests {
+			err = fmt.Errorf("rate limited (429)")
+			continue
+		}
+
 		var result LoginResponse
 		if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
 			err = decodeErr
@@ -229,7 +292,7 @@ func (r *Robot) Login() error {
 		r.UserID = result.UserID // Update UserID just in case
 		return nil
 	}
-	return fmt.Errorf("login failed after 3 retries: %w", err)
+	return fmt.Errorf("login failed after 5 retries: %w", err)
 }
 
 func (r *Robot) ConnectWS() error {
@@ -242,61 +305,57 @@ func (r *Robot) ConnectWS() error {
 	return nil
 }
 
-func (r *Robot) CheckState() {
-	req := map[string]interface{}{
-		"game":    "color_game",
-		"command": "get_state",
-	}
-	if err := r.Conn.WriteJSON(req); err != nil {
-		logger.Error(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Failed to check state")
-	}
-}
-
-func (r *Robot) ListenLoop() {
-	defer close(r.Done)
-
+func (r *Robot) readPump() {
+	defer close(r.msgChan)
 	for {
 		_, message, err := r.Conn.ReadMessage()
 		if err != nil {
 			logger.Error(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Read error")
 			return
 		}
-
-		var event GameEvent
-		if err := json.Unmarshal(message, &event); err != nil {
-			logger.Warn(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Failed to parse message")
-			continue
-		}
-
-		switch event.Type {
-		case "betting_started":
-			go r.PlaceBet(event.RoundID)
-		case "game_state":
-			var data struct {
-				RoundID string `json:"round_id"`
-				State   string `json:"state"`
-			}
-			if err := json.Unmarshal(event.Data, &data); err != nil {
-				logger.Warn(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Failed to parse game_state data")
-				continue
-			}
-			logger.Info(r.ctx).Int("robot_id", r.ID).Str("round_id", data.RoundID).Str("state", data.State).Msg("Received game state")
-			if data.State == "BETTING" {
-				go r.PlaceBet(data.RoundID)
-			}
-		case "result":
-			logger.Info(r.ctx).Int("robot_id", r.ID).Str("round_id", event.RoundID).Str("result", string(event.Data)).Msg("Saw result")
-		case "settlement":
-			logger.Info(r.ctx).Int("robot_id", r.ID).Str("data", string(event.Data)).Msg("Received settlement")
-		}
+		r.msgChan <- message
 	}
 }
 
-func (r *Robot) PlaceBet(roundID string) {
-	// Random delay to simulate human behavior
-	// Spread out bets over 5 seconds to avoid DB spikes causing heartbeat timeouts
-	time.Sleep(time.Duration(rand.Intn(5000)) * time.Millisecond)
+func (r *Robot) handleMessage(message []byte, currentRoundID *string, betTimer *time.Timer) {
+	var event GameEvent
+	if err := json.Unmarshal(message, &event); err != nil {
+		logger.Warn(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Failed to parse message")
+		return
+	}
 
+	switch event.Type {
+	case "betting_started":
+		*currentRoundID = event.RoundID
+		r.scheduleBet(betTimer)
+	case "game_state":
+		var data struct {
+			RoundID string `json:"round_id"`
+			State   string `json:"state"`
+		}
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			logger.Warn(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Failed to parse game_state data")
+			return
+		}
+		logger.Info(r.ctx).Int("robot_id", r.ID).Str("round_id", data.RoundID).Str("state", data.State).Msg("Received game state")
+		if data.State == "BETTING" {
+			*currentRoundID = data.RoundID
+			r.scheduleBet(betTimer)
+		}
+	case "result":
+		// logger.Info(r.ctx).Int("robot_id", r.ID).Str("round_id", event.RoundID).Str("result", string(event.Data)).Msg("Saw result")
+	case "settlement":
+		// logger.Info(r.ctx).Int("robot_id", r.ID).Str("data", string(event.Data)).Msg("Received settlement")
+	}
+}
+
+func (r *Robot) scheduleBet(timer *time.Timer) {
+	// Random delay to simulate human behavior (0-3s)
+	delay := time.Duration(rand.Intn(3000)) * time.Millisecond
+	timer.Reset(delay)
+}
+
+func (r *Robot) performBet(roundID string) {
 	colors := []string{"red", "green", "blue"}
 	color := colors[rand.Intn(len(colors))]
 	amount := (rand.Intn(10) + 1) * 10 // 10, 20, ..., 100
@@ -312,6 +371,4 @@ func (r *Robot) PlaceBet(roundID string) {
 		logger.Error(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Failed to place bet")
 		return
 	}
-
-	logger.Info(r.ctx).Int("robot_id", r.ID).Int("amount", amount).Str("color", color).Str("round_id", roundID).Msg("Placed bet")
 }
