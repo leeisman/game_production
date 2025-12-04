@@ -5,14 +5,47 @@ This project demonstrates a **Modular Monolith** architecture that can seamlessl
 
 ## 🌟 Key Features
 
-*   **Modular Architecture**: Designed with Clean Architecture principles, allowing modules (GMS, GS, Gateway) to be deployed as a Monolith or distributed Microservices.
+*   **Modular Architecture**: Designed with Clean Architecture principles, allowing modules (GMS, User, Gateway) to be deployed as a Monolith or distributed Microservices.
+*   **High Performance**: Optimized for high concurrency, supporting **10,000+ concurrent users** on a single node.
+    *   **Smart Buffered Logging**: Async I/O with immediate error flush.
+    *   **Efficient WebSocket**: Non-blocking broadcast with fail-fast strategy.
 *   **Real-time Gaming**:
     *   **GMS (Game Manager Service)**: Manages game state (Round, Betting, Drawing, Result) using a robust State Machine.
-    *   **GS (Game Service)**: Handles user bets, wallet transactions, and settlement.
     *   **Gateway**: Manages WebSocket connections and broadcasts game events to clients.
-*   **Distributed ID Generation**: Uses Snowflake algorithm for unique Bet IDs.
-*   **Type Safety**: All game events and interactions are defined using Protocol Buffers (gRPC) with strict Enum types.
-*   **Flexible Deployment**: Support for both Monolith (single process) and Microservices (gRPC communication) deployments.
+*   **Type Safety**: All game events and interactions are defined using Protocol Buffers (gRPC).
+
+---
+
+## 📚 Documentation
+
+Detailed documentation is available in the `docs/` directory:
+
+*   **Architecture & Design**:
+    *   [Project Evolution](docs/ai/project_evolution.md): History of architectural decisions and design philosophy.
+    *   [Gateway Module](docs/module/gateway/README.md): WebSocket design and protocol.
+    *   [User Module](docs/module/user/README.md): User authentication and management.
+*   **Performance**:
+    *   [Benchmark Report](docs/performance/color_game_benchmark.md): How we achieved 10k+ CCU.
+*   **Shared Components**:
+    *   [Logger System](docs/pkg/logger.md): SmartWriter and logging strategy.
+    *   [Protobuf Definitions](docs/shared/protobuf.md): Service interfaces and message standards.
+*   **Operations**:
+    *   [Service Guide](docs/cmd/color_game.md): Startup and troubleshooting guide.
+
+---
+
+## 🚀 Performance Highlights
+
+We have successfully benchmarked the system with **12,500+ Concurrent Users (CCU)** on a local development machine.
+
+*   **Optimization Journey**:
+    1.  **Login**: Solved bcrypt CPU spikes with ramp-up strategies.
+    2.  **Connection**: Tuned OS limits (`ulimit`, ephemeral ports).
+    3.  **Logging**: Implemented `SmartWriter` to eliminate console I/O blocking, which was the primary bottleneck at 4500 users.
+
+See [Benchmark Report](docs/performance/color_game_benchmark.md) for details.
+
+---
 
 ## 🏗 Project Structure
 
@@ -20,102 +53,69 @@ This project demonstrates a **Modular Monolith** architecture that can seamlessl
 game_product/
 ├── cmd/
 │   └── color_game/
-│       ├── monolith/           # Single process deployment (All-in-One)
+│       ├── monolith/           # Single process deployment (Recommended)
 │       └── microservices/      # Distributed deployment
-│           ├── gateway/        # WebSocket Gateway
-│           ├── gms/            # Game Manager Service
-│           └── gs/             # Game Service
 ├── internal/
 │   └── modules/
-│       ├── color_game/         # Game logic (GMS & GS)
-│       └── gateway/            # Gateway logic
-├── pkg/                        # Public libraries (Service interfaces, Logger, etc.)
+│       ├── color_game/         # Game logic
+│       ├── gateway/            # WebSocket Gateway
+│       └── user/               # User & Auth logic
+├── pkg/                        # Public libraries (Logger, etc.)
 ├── shared/
 │   └── proto/                  # gRPC protocol definitions
-└── tests/                      # Integration tests
+└── docs/                       # Comprehensive documentation
 ```
+
+---
+
+## 📡 API & Protocol
+
+The platform uses WebSocket for client communication with a standardized **Header + Body** JSON format.
+
+**Client Request (Place Bet):**
+```json
+{
+  "game": "color_game",
+  "command": "place_bet",
+  "data": {
+    "color": "red",
+    "amount": 100
+  }
+}
+```
+
+**Server Broadcast (Game State):**
+```json
+{
+  "game": "color_game",
+  "command": "game_state",
+  "data": {
+    "round_id": "20231204120000",
+    "state": "BETTING",
+    "countdown": 10
+  }
+}
+```
+
+---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-
 *   Go 1.24+
-*   Redis (Optional, for distributed storage)
-*   Protobuf Compiler (protoc)
+*   Redis (Optional)
+*   PostgreSQL
 
-### Running Locally (Monolith)
-
-The easiest way to run the game for development.
+### Running Monolith (Recommended)
 
 ```bash
+# Start the service
 go run cmd/color_game/monolith/main.go
 ```
 
-### Running Locally (Microservices)
+The service will start on port `8080`.
 
-Run each service in a separate terminal:
-
-1.  **GMS (Game Manager Service)**
-    ```bash
-    go run cmd/color_game/microservices/gms/main.go
-    ```
-
-2.  **GS (Game Service)**
-    ```bash
-    go run cmd/color_game/microservices/gs/main.go
-    ```
-
-3.  **Gateway**
-    ```bash
-    go run cmd/color_game/microservices/gateway/main.go
-    ```
-
-## 📡 API & Protocol
-
-The platform uses WebSocket for client communication.
-
-### WebSocket Events
-
-All events are JSON formatted. The `type` field corresponds to the `EventType` enum defined in Proto, converted to lowercase string.
-
-**Client -> Server:**
-
-*   **Place Bet**:
-    ```json
-    {
-      "game": "color_game",
-      "command": "place_bet",
-      "color": "red",
-      "amount": 100
-    }
-    ```
-
-**Server -> Client (Broadcasts):**
-
-*   **Round Started**: `{"type": "round_started", "round_id": "...", "timestamp": 1234567890}`
-*   **Betting Started**: `{"type": "betting_started", "round_id": "...", "timestamp": 1234567890}`
-*   **Drawing**: `{"type": "drawing", "round_id": "...", "timestamp": 1234567890}`
-*   **Result**: `{"type": "result", "round_id": "...", "data": "{\"color\": \"red\"}", "timestamp": 1234567890}`
-*   **Settlement**: `{"type": "settlement", "round_id": "...", "data": "{\"win_amount\": 200}", "timestamp": 1234567890}`
-
-## 🛠 Development
-
-### Generating Proto Files
-
-If you modify `.proto` files, regenerate the Go code:
-
-```bash
-protoc -I=. --go_out=. --go_opt=paths=source_relative \
-    --go-grpc_out=. --go-grpc_opt=paths=source_relative \
-    shared/proto/colorgame/colorgame.proto
-```
-
-### Running Tests
-
-```bash
-go test -v ./tests/integration/gateway/...
-go test -v ./tests/integration/color_game/...
-```
+---
 
 ## 📝 License
 
