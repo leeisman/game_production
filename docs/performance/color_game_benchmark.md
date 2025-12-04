@@ -144,8 +144,17 @@
 
 **兇手**: **同步的 Console Logging**。
 
-#### 5. 驗證
-將日誌格式改為 `json` 後，`syscall` 佔比大幅下降，`Connection Reset` 消失，證實了我們的推導。
+#### 5. 驗證 (After Optimization)
+將日誌格式改為 `json` 後，我們再次抓取 pprof 數據，結果如下圖所示：
+
+![pprof_top_list_json](images/pprof_top_list_json.png)
+
+**對比分析**：
+1.  **Syscall 消失**: `syscall.syscall` 的 Flat 佔比從 **50% 驟降至 0.45%**。這證明 I/O 阻塞已完全消除。
+2.  **業務邏輯回歸**:
+    *   現在的 CPU 熱點是 `blowfish.EncryptBlock` (20.91%)，這是處理用戶登入時的密碼加密邏輯。
+    *   這是一個健康的 **CPU Bound** 狀態，說明系統正在全力處理業務請求，而不是在等待 I/O。
+3.  **結果**: `Connection Reset` 錯誤消失，系統能夠穩定支撐 9000+ CCU。
 
 ---
 
