@@ -6,7 +6,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/frankieli/game_product/pkg/service/colorgame"
+	colorgame "github.com/frankieli/game_product/pkg/service/color_game"
 	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
 )
 

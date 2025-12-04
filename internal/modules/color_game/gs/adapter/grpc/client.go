@@ -4,7 +4,7 @@ package grpc
 import (
 	"context"
 
-	"github.com/frankieli/game_product/pkg/service/colorgame"
+	colorgame "github.com/frankieli/game_product/pkg/service/color_game"
 	pb "github.com/frankieli/game_product/shared/proto/colorgame"
 	"google.golang.org/grpc"
 )

@@ -10,7 +10,7 @@ run-color-monolith:
 
 # Run Color Game Test Robot
 # Usage: make run-color-robot USERS=1000
-USERS ?= 8500
+USERS ?= 1
 run-color-robot:
 	@echo "🤖 Starting Color Game Test Robot with $(USERS) users..."
 	@go run cmd/color_game/test_robot/main.go -users $(USERS) -log-level info

@@ -5,18 +5,19 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/frankieli/game_product/internal/modules/gateway/ws"
+
 	"google.golang.org/protobuf/proto"
 
-	"github.com/frankieli/game_product/internal/modules/gateway/domain"
 	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
 )
 
 // Broadcaster receives events and broadcasts them to WebSocket clients
 type Broadcaster struct {
-	gatewayBroadcaster domain.GatewayBroadcaster
+	gatewayBroadcaster *ws.Manager
 }
 
-func NewBroadcaster(gatewayBroadcaster domain.GatewayBroadcaster) *Broadcaster {
+func NewBroadcaster(gatewayBroadcaster *ws.Manager) *Broadcaster {
 	return &Broadcaster{
 		gatewayBroadcaster: gatewayBroadcaster,
 	}
@@ -28,12 +29,24 @@ func (b *Broadcaster) convertEvent(event proto.Message) []byte {
 		// Convert Enum to string (e.g. EVENT_TYPE_ROUND_STARTED -> round_started)
 		eventType := strings.ToLower(strings.TrimPrefix(e.Type.String(), "EVENT_TYPE_"))
 
-		// Convert to JSON for WebSocket clients
+		// Try to parse inner data if it's JSON
+		var innerData interface{} = e.Data
+		if len(e.Data) > 0 {
+			var parsed interface{}
+			if err := json.Unmarshal([]byte(e.Data), &parsed); err == nil {
+				innerData = parsed
+			}
+		}
+
+		// Convert to JSON for WebSocket clients (Standard Header + Body)
 		jsonMsg, err := json.Marshal(map[string]interface{}{
-			"type":      eventType,
-			"round_id":  e.RoundId,
-			"data":      e.Data,
-			"timestamp": e.Timestamp,
+			"game":    "color_game",
+			"command": eventType,
+			"data": map[string]interface{}{
+				"round_id":  e.RoundId,
+				"data":      innerData, // This might be redundant if data is already flattened, but let's keep it generic
+				"timestamp": e.Timestamp,
+			},
 		})
 		if err == nil {
 			return jsonMsg

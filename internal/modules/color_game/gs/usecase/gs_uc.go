@@ -9,7 +9,7 @@ import (
 	"github.com/frankieli/game_product/internal/modules/color_game/gs/domain"
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/frankieli/game_product/pkg/service"
-	"github.com/frankieli/game_product/pkg/service/colorgame"
+	colorgame "github.com/frankieli/game_product/pkg/service/color_game"
 	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
 )
 

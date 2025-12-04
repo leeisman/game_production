@@ -34,33 +34,15 @@ import (
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"gopkg.in/natefinch/lumberjack.v2"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 func main() {
-	// Create logs directory if not exists
-	if err := os.MkdirAll("logs/color_game", 0o755); err != nil {
-		panic(err)
-	}
-
-	// Use lumberjack for log rotation
-	logFile := &lumberjack.Logger{
-		Filename:   "logs/color_game/monolith.log",
-		MaxSize:    100,  // megabytes
-		MaxBackups: 3,    // keep 3 old files
-		MaxAge:     28,   // days
-		Compress:   true, // compress old files
-	}
-
 	// Initialize logger
-	logger.Init(logger.Config{
-		Level:  "debug", // Ignore Debug logs, only log Info and above
-		Format: "json",  // Use JSON for file output
-		Output: logFile, // Write to rotating file
-		Async:  false,   // Enable smart async logging (Info+ are sync now)
-	})
+	logger.InitWithFile("logs/color_game/monolith.log", "info", "console")
+	defer logger.Flush()
 
 	// Also print to console that we started
 	fmt.Println("🚀 Starting Color Game Monolith... Logs are being written to logs/color_game/monolith.log (rotating)")
@@ -70,9 +52,17 @@ func main() {
 	cfg := config.LoadMonolithConfig()
 
 	// 2. Initialize Infrastructure
+	// 2. Initialize Infrastructure
 	dbConnStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		cfg.User.Database.Host, cfg.User.Database.Port, cfg.User.Database.User, cfg.User.Database.Password, cfg.User.Database.Name)
-	db, err := gorm.Open(postgres.Open(dbConnStr), &gorm.Config{})
+
+	// Configure GORM Logger
+	gormLog := logger.NewGormLogger()
+	gormLog.LogLevel = gormlogger.Info // Log all queries as requested
+
+	db, err := gorm.Open(postgres.Open(dbConnStr), &gorm.Config{
+		Logger: gormLog,
+	})
 	if err != nil {
 		logger.FatalGlobal().Err(err).Msg("Failed to connect to database")
 	}
@@ -109,7 +99,7 @@ func main() {
 	sessionRepo := userRepo.NewSessionRepository(db)
 	userUC := userUseCase.NewUserUseCase(userRepository, sessionRepo, cfg.User.JWT.Secret, cfg.User.JWT.Duration)
 	userSvc := userLocal.NewHandler(userUC) // Use local adapter
-	userHandler := userHttp.NewHandler(userSvc)
+	userHandler := userHttp.NewHandler(userUC)
 	logger.InfoGlobal().Msg("✅ User module initialized")
 
 	// Wallet Module (Mock)
@@ -180,7 +170,8 @@ func main() {
 	httpHandler := gatewayHttp.NewHandler(gatewayUC, wsManager, userSvc)
 
 	// 4. Setup HTTP Server
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
 
 	// Add logger middleware (must be first to capture all requests)
 	r.Use(logger.GinMiddleware())

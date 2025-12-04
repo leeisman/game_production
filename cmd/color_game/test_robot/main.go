@@ -17,7 +17,6 @@ import (
 
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/gorilla/websocket"
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // Config holds the robot configuration
@@ -55,8 +54,8 @@ type LoginResponse struct {
 }
 
 type GameEvent struct {
-	Type    string          `json:"type"`
-	RoundID string          `json:"round_id"`
+	Game    string          `json:"game"`
+	Command string          `json:"command"`
 	Data    json.RawMessage `json:"data"`
 }
 
@@ -75,25 +74,9 @@ func main() {
 	}
 
 	// Create logs directory if not exists
-	if err := os.MkdirAll("logs/color_game", 0o755); err != nil {
-		panic(err)
-	}
-
-	// Use lumberjack for log rotation
-	logFile := &lumberjack.Logger{
-		Filename:   "logs/color_game/test_robot.log",
-		MaxSize:    100,  // megabytes
-		MaxBackups: 3,    // keep 3 old files
-		MaxAge:     28,   // days
-		Compress:   true, // compress old files
-	}
-
-	logger.Init(logger.Config{
-		Level:  *logLevel,
-		Format: "json",  // Use JSON for file output
-		Output: logFile, // Write to rotating file
-		Async:  false,   // Enable smart async logging
-	})
+	// InitWithFile handles directory creation, rotation, and multi-output
+	logger.InitWithFile("logs/color_game/test_robot.log", *logLevel, "console")
+	defer logger.Flush()
 
 	fmt.Printf("🤖 Starting Test Robot... Logs are being written to logs/color_game/test_robot.log (rotating)\n")
 
@@ -194,12 +177,12 @@ func (r *Robot) Run() error {
 
 func (r *Robot) Register() error {
 	var err error
-	for i := 0; i < 5; i++ { // Retry 5 times
+	for i := 0; i < 20; i++ { // Retry 20 times
 		if i > 0 {
 			// Random sleep 100-300ms
-			sleepMs := 100 + rand.Intn(200)
+			sleepMs := 100 + rand.Intn(500)
 			time.Sleep(time.Duration(sleepMs) * time.Millisecond)
-			logger.Info(r.ctx).Int("robot_id", r.ID).Int("retry", i).Msg("Retrying registration...")
+			logger.Warn(r.ctx).Int("robot_id", r.ID).Int("retry", i).Msg("Retrying registration...")
 		}
 
 		url := fmt.Sprintf("http://%s/api/users/register", r.Host)
@@ -244,6 +227,8 @@ func (r *Robot) Register() error {
 		r.UserID = result.UserID
 		return nil
 	}
+	// Log final failure as Error
+	logger.Error(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Register failed after 5 retries")
 	return fmt.Errorf("register failed after 5 retries: %w", err)
 }
 
@@ -254,7 +239,7 @@ func (r *Robot) Login() error {
 			// Random sleep 100-300ms
 			sleepMs := 100 + rand.Intn(200)
 			time.Sleep(time.Duration(sleepMs) * time.Millisecond)
-			logger.Info(r.ctx).Int("robot_id", r.ID).Int("retry", i).Msg("Retrying login...")
+			logger.Warn(r.ctx).Int("robot_id", r.ID).Int("retry", i).Msg("Retrying login...")
 		}
 
 		url := fmt.Sprintf("http://%s/api/users/login", r.Host)
@@ -292,6 +277,8 @@ func (r *Robot) Login() error {
 		r.UserID = result.UserID // Update UserID just in case
 		return nil
 	}
+	// Log final failure as Error
+	logger.Error(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Login failed after 5 retries")
 	return fmt.Errorf("login failed after 5 retries: %w", err)
 }
 
@@ -299,6 +286,8 @@ func (r *Robot) ConnectWS() error {
 	u := url.URL{Scheme: "ws", Host: r.Host, Path: "/ws", RawQuery: "token=" + r.Token}
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
+		// Log connection failure as Error
+		logger.Error(r.ctx).Int("robot_id", r.ID).Err(err).Msg("WebSocket connection failed")
 		return err
 	}
 	r.Conn = c
@@ -324,15 +313,27 @@ func (r *Robot) handleMessage(message []byte, currentRoundID *string, betTimer *
 		return
 	}
 
-	switch event.Type {
+	switch event.Command {
 	case "betting_started":
-		*currentRoundID = event.RoundID
+		var data struct {
+			RoundID string `json:"round_id"`
+		}
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			logger.Warn(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Failed to parse betting_started data")
+			return
+		}
+		*currentRoundID = data.RoundID
 		r.scheduleBet(betTimer)
+
 	case "game_state":
 		var data struct {
 			RoundID string `json:"round_id"`
 			State   string `json:"state"`
 		}
+		// event.Data is now the nested "data" object which contains "data" field if it was nested in broadcaster
+		// But wait, in broadcaster we did:
+		// "data": map[string]interface{}{ "round_id": ..., "data": innerData }
+		// So event.Data here is that map.
 		if err := json.Unmarshal(event.Data, &data); err != nil {
 			logger.Warn(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Failed to parse game_state data")
 			return
@@ -342,10 +343,11 @@ func (r *Robot) handleMessage(message []byte, currentRoundID *string, betTimer *
 			*currentRoundID = data.RoundID
 			r.scheduleBet(betTimer)
 		}
+
 	case "result":
-		// logger.Info(r.ctx).Int("robot_id", r.ID).Str("round_id", event.RoundID).Str("result", string(event.Data)).Msg("Saw result")
+		// logger.Info(r.ctx).Int("robot_id", r.ID).Msg("Saw result")
 	case "settlement":
-		// logger.Info(r.ctx).Int("robot_id", r.ID).Str("data", string(event.Data)).Msg("Received settlement")
+		// logger.Info(r.ctx).Int("robot_id", r.ID).Msg("Received settlement")
 	}
 }
 
@@ -363,8 +365,10 @@ func (r *Robot) performBet(roundID string) {
 	req := map[string]interface{}{
 		"game":    "color_game",
 		"command": "place_bet",
-		"color":   color,
-		"amount":  amount,
+		"data": map[string]interface{}{
+			"color":  color,
+			"amount": amount,
+		},
 	}
 
 	if err := r.Conn.WriteJSON(req); err != nil {

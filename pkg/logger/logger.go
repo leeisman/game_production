@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // contextKey is the type for context keys
@@ -21,7 +24,10 @@ const (
 )
 
 // globalLogger is the default logger
-var globalLogger zerolog.Logger
+var (
+	globalLogger zerolog.Logger
+	globalWriter *SmartWriter
+)
 
 // Config holds logger configuration
 type Config struct {
@@ -29,7 +35,33 @@ type Config struct {
 	Format     string // json, console
 	Output     io.Writer
 	CallerSkip int
-	Async      bool // Enable asynchronous logging
+}
+
+// InitWithFile initializes logger with console and file output
+// It handles directory creation, log rotation, and multi-output setup.
+func InitWithFile(filename string, level string, format string) {
+	// Ensure directory exists
+	dir := filepath.Dir(filename)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		panic(err)
+	}
+
+	logFile := &lumberjack.Logger{
+		Filename:   filename,
+		MaxSize:    100,  // megabytes
+		MaxBackups: 3,    // keep 3 old files
+		MaxAge:     28,   // days
+		Compress:   true, // compress old files
+	}
+
+	// Use MultiWriter to write to both Console and File
+	multiOutput := io.MultiWriter(os.Stdout, logFile)
+
+	Init(Config{
+		Level:  level,
+		Format: format,
+		Output: multiOutput,
+	})
 }
 
 // Init initializes the global logger
@@ -44,14 +76,18 @@ func Init(cfg Config) {
 		output = os.Stdout
 	}
 
-	// Wrap with AsyncWriter if enabled
-	if cfg.Async {
-		// Use LevelAsyncWriter:
-		// - Debug/Info: Async (may drop if buffer full)
-		// - Warn/Error/Fatal: Sync (never drop)
-		// Buffer size 10000 should be enough for bursts
-		output = NewLevelAsyncWriter(output, 10000)
-	}
+	// Always use SmartWriter:
+	// - Buffered I/O (256KB) for performance (non-blocking mostly)
+	// - Auto flush every 1s
+	// - Immediate flush on Error/Fatal
+	// - Preserves log order
+	sw := NewSmartWriter(output, 1*time.Second)
+	globalWriter = sw // Store for Flush()
+	output = sw
+
+	// Note: We should ideally call sw.Close() on shutdown,
+	// but since logger is global, we rely on OS flush or manual Sync if needed.
+	// For now, the periodic flush handles most cases.
 
 	// Customize caller marshal function to show shorter path
 	zerolog.CallerMarshalFunc = func(pc uintptr, file string, line int) string {
@@ -106,6 +142,13 @@ func Init(cfg Config) {
 	}
 
 	globalLogger = logger
+}
+
+// Flush forces all buffered logs to be written to the underlying writer
+func Flush() {
+	if globalWriter != nil {
+		_ = globalWriter.Sync()
+	}
 }
 
 // parseLevel converts string level to zerolog.Level

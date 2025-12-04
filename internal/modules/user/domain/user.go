@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"context"
 	"time"
 )
 
@@ -35,14 +34,4 @@ const (
 // IsActive checks if user is active
 func (u *User) IsActive() bool {
 	return u.Status == UserStatusActive
-}
-
-// UserUseCase defines the interface for user business logic
-// This interface is used by internal adapters (HTTP, gRPC, Local)
-type UserUseCase interface {
-	Register(ctx context.Context, username, password, email string) (int64, error)
-	Login(ctx context.Context, username, password string) (int64, string, string, time.Time, error)
-	Logout(ctx context.Context, token string) error
-	ValidateToken(ctx context.Context, token string) (int64, string, time.Time, error)
-	RefreshToken(ctx context.Context, refreshToken string) (string, string, time.Time, error)
 }

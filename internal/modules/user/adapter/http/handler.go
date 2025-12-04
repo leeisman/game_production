@@ -1,10 +1,10 @@
 package http
 
 import (
+	"github.com/frankieli/game_product/internal/modules/user/usecase"
 	"net/http"
 	"time"
 
-	"github.com/frankieli/game_product/internal/modules/user/domain"
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
@@ -12,15 +12,15 @@ import (
 
 // Handler handles HTTP requests for user module
 type Handler struct {
-	svc             domain.UserUseCase
+	userUC          *usecase.UserUseCase
 	loginLimiter    *rate.Limiter
 	registerLimiter *rate.Limiter
 }
 
 // NewHandler creates a new HTTP handler
-func NewHandler(svc domain.UserUseCase) *Handler {
+func NewHandler(userUC *usecase.UserUseCase) *Handler {
 	return &Handler{
-		svc: svc,
+		userUC: userUC,
 		// Login: 100 RPS, Burst 50
 		loginLimiter: rate.NewLimiter(rate.Limit(100), 50),
 		// Register: 50 RPS, Burst 20 (Register is heavier and less frequent)
@@ -104,7 +104,7 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	userID, err := h.svc.Register(c.Request.Context(), req.Username, req.Password, req.Email)
+	userID, err := h.userUC.Register(c.Request.Context(), req.Username, req.Password, req.Email)
 	if err != nil {
 		logger.Error(c.Request.Context()).Err(err).Str("username", req.Username).Msg("Register: failed")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -135,7 +135,7 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	userID, token, refreshToken, expiresAt, err := h.svc.Login(c.Request.Context(), req.Username, req.Password)
+	userID, token, refreshToken, expiresAt, err := h.userUC.Login(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
 		logger.Error(c.Request.Context()).Err(err).Str("username", req.Username).Msg("Login: failed")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
@@ -165,7 +165,7 @@ func (h *Handler) Logout(c *gin.Context) {
 		token = token[7:]
 	}
 
-	err := h.svc.Logout(c.Request.Context(), token)
+	err := h.userUC.Logout(c.Request.Context(), token)
 	if err != nil {
 		logger.Error(c.Request.Context()).Err(err).Msg("Logout: failed")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
