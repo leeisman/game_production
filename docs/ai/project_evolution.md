@@ -44,6 +44,7 @@
     *   **Adapter**: 系統的唯一出入口 (HTTP/gRPC/WebSocket)，負責將外部請求轉換為 UseCase 調用，並將結果格式化返回。
         *   **Local Adapter**: 單體模式下使用，直接調用 UseCase (In-Process Call)，零延遲。
         *   **gRPC Adapter**: 微服務模式下使用，通過網路調用遠端服務。
+    *   **Dependency Injection**: Adapter (Handler) 依賴 UseCase **介面**，在 `main.go` 中進行注入。這確保了 Adapter 與具體業務邏輯解耦。
 *   **Modular Monolith**: 目前以單體形式運行，但模組間邊界清晰，隨時可拆分為微服務。
 
 ### 2.2 Performance
