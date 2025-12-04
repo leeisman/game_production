@@ -47,11 +47,17 @@
     *   **Dependency Injection**: Adapter (Handler) 依賴 UseCase **介面**，在 `main.go` 中進行注入。這確保了 Adapter 與具體業務邏輯解耦。
 *   **Modular Monolith**: 目前以單體形式運行，但模組間邊界清晰，隨時可拆分為微服務。
 
-### 2.2 Performance
+### 2.2 Module Communication
+*   **pkg/service**: 定義模組間的**契約 (Contract)**。
+    *   當 Module A 需要調用 Module B 時，應依賴 `pkg/service/module_b` 中定義的介面。
+    *   `internal/modules` 是私有的，不應被其他模組直接 import。
+    *   這確保了模組間的鬆耦合，並允許輕鬆替換實作 (e.g., Mocking for Test)。
+
+### 2.3 Performance
 *   **Zero Allocation**: 在熱點路徑 (Hot Path) 盡量避免記憶體分配 (e.g., 使用 `zerolog`, 避免字串拼接)。
 *   **Non-Blocking I/O**: 關鍵路徑 (如 WebSocket 廣播) 必須是非阻塞的。如果客戶端慢，直接斷開 (Fail-Fast)。
 
-### 2.3 Reliability
+### 2.4 Reliability
 *   **Fail-Fast**: 遇到無法恢復的錯誤 (如 Buffer Full)，立即失敗而不是拖慢系統。
 *   **Observability**: 每個請求必須有 `request_id`，並貫穿整個調用鏈 (Context Propagation)。
 
