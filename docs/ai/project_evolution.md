@@ -42,6 +42,8 @@
 *   **Clean Architecture**: 嚴格遵守 `Domain` -> `UseCase` -> `Adapter` 的依賴方向。
     *   **UseCase**: 純粹的業務邏輯實作，不依賴任何外部框架。
     *   **Adapter**: 系統的唯一出入口 (HTTP/gRPC/WebSocket)，負責將外部請求轉換為 UseCase 調用，並將結果格式化返回。
+        *   **Local Adapter**: 單體模式下使用，直接調用 UseCase (In-Process Call)，零延遲。
+        *   **gRPC Adapter**: 微服務模式下使用，通過網路調用遠端服務。
 *   **Modular Monolith**: 目前以單體形式運行，但模組間邊界清晰，隨時可拆分為微服務。
 
 ### 2.2 Performance
