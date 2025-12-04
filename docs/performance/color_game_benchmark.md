@@ -50,8 +50,12 @@
 ## 4. 問題排查指南 (Troubleshooting Guide)
 
 ### Error: `read tcp: connection reset by peer`
-*   **原因 1**: Server 端 Panic 或崩潰 (檢查 Server 日誌)。
-*   **原因 2**: Server 端因為日誌阻塞或 CPU 過高，無法及時讀取 TCP Buffer，導致 OS 丟棄封包並發送 RST。
+*   **原因 1 (最常見)**: **Server 端 I/O 阻塞 (I/O Blocking)**。
+    *   當 Server 開啟 Debug 日誌且輸出到 Console 時，主 Goroutine 被同步的 `write` syscall 阻塞。
+    *   這導致 Goroutine 無法及時執行 `conn.Read()` 來清空 OS 的 TCP Receive Buffer。
+    *   當 TCP Buffer 滿了，OS 會拒絕客戶端發送的新封包，並最終發送 `RST` (Reset) 封包斷開連接。
+    *   **特徵**: Server CPU 可能不高，但客戶端大量斷線，且 Server 日誌停滯。
+*   **原因 2**: Server 端 Panic 或崩潰 (檢查 Server 日誌)。
 *   **原因 3**: 防火牆或 Load Balancer 超時 (檢查 Idle Timeout 設定)。
 
 ### Error: `context deadline exceeded` (Login)
