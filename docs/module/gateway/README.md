@@ -76,6 +76,42 @@ WebSocket 實現遵循標準的 **Hub-Client** 模式。
 *   **SendToUser**: 非阻塞發送，帶有超時回退 (Fallback Timeout)。如果 Buffer 滿了，等待 5 秒，若仍無法寫入則斷開連接。
 *   **Broadcast**: 快速失敗 (Fail-Fast)。如果某個客戶端的 Buffer 滿了，**立即斷開該客戶端**，避免阻塞廣播流程影響其他用戶。
 
+### 4.4 錯誤處理與資源清理 (`CloseWithReason`)
+
+我們設計了 `CloseWithReason` 方法來統一處理連接關閉，其背後有幾個關鍵的設計考量：
+
+1.  **集中化日誌 (Centralized Logging)**:
+    *   每次斷線都會記錄明確的 `reason` (e.g., `buffer_full`, `timeout`, `read_error`)。
+    *   這對於生產環境排查問題至關重要，我們可以清楚知道是因為網路問題、客戶端太慢、還是服務端主動踢人。
+
+2.  **冪等性 (Idempotency)**:
+    *   使用 `sync.Once` 確保清理邏輯只執行一次。
+    *   無論是 ReadPump 出錯、WritePump 出錯、還是 Manager 主動踢人，都可以安全地調用此方法，不用擔心重複關閉導致的錯誤。
+
+3.  **為什麼不關閉 Send Channel? (Panic Prevention)**:
+    *   這是一個常見的 Go Concurrency 陷阱。如果我們在 `CloseWithReason` 中 `close(c.Send)`，那麼其他的 Goroutine (如廣播) 可能正試圖寫入這個 Channel，這會導致 **Panic: send on closed channel**。
+    *   **解決方案**: 我們只關閉底層的 TCP 連接 (`c.Conn.Close()`)。
+    *   **結果**: `WritePump` 會因為 TCP 寫入錯誤而退出，或者因為 `Send` channel 不再有數據而最終被 GC 回收。這是一種更安全、更健壯的資源釋放方式。
+
+```go
+func (c *Connection) CloseWithReason(r CloseReason, err error) {
+    c.closeOnce.Do(func() {
+        logger.Error(context.Background()).
+            Int64("user_id", c.UserID).
+            Str("reason", string(r)).
+            Err(err).
+            Msg("ws connection closed")
+        
+        // CRITICAL: Do NOT close the channel here.
+        // Closing the channel while other goroutines might be writing to it 
+        // will cause a panic. Let the GC handle the channel.
+        // close(c.Send) 
+        
+        c.Conn.Close()
+    })
+}
+```
+
 ---
 
 ## 5. 通訊協議 (Standardized API)
