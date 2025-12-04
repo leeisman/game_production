@@ -106,28 +106,43 @@
 使用 `make pprof-cpu` 抓取 30 秒的 CPU Profile。
 
 #### 2. 觀察 Top View (關鍵證據)
-下圖是我們在問題發生時抓取的 pprof Top View：
+下圖是我們在問題發生時抓取的 pprof Top List View：
 
-![pprof_console_bottleneck](images/pprof_console_bottleneck.png)
+![pprof_top_list](images/pprof_top_list.png)
 
 #### 3. 數據解讀 (Sherlock Holmes Style)
 
-我們從圖中觀察到幾個異常現象，並據此進行推導：
+為了讓大家都能理解如何從這張圖中看出端倪，我們先科普兩個 pprof 的核心概念：
 
-1.  **異常的 Syscall 佔比**:
-    *   **現象**: `syscall.syscall` 佔據了 **48.65%** 的 CPU 時間，排名第一。
-    *   **推導**: 正常的 Go 應用程式（即使是 I/O 密集型）不應有如此高的 Syscall 佔比。這意味著程式正在**極度頻繁地**與 OS 內核交互（通常是 `read` 或 `write`）。
+*   **Flat**: 函數**自己**在 CPU 上執行的時間（不包含它呼叫其他函數的時間）。如果 Flat 很高，代表這個函數本身是 CPU 密集型的（例如數學計算、加密）。
+*   **Cum (Cumulative)**: 函數**自己加上它呼叫的所有子函數**的總時間。如果 Cum 很高但 Flat 很低，代表這個函數是「包工頭」，它把大部分工作都外包出去了（例如呼叫 I/O）。
 
-2.  **尋找嫌疑人 (Callers)**:
-    *   **現象**: 在 Top 10 列表中，除了 Runtime (`runtime.kevent`, `runtime.mallocgc`) 和 System (`internal/poll`) 函數外，**唯一的應用層函數**是 `github.com/rs/zerolog.(*ConsoleWriter).Write` (2.70%)。
-    *   **推導**: 雖然 2.7% 看起來不多，但它是導致大量 `syscall` 的直接原因。Console 輸出涉及大量的字串格式化和細碎的 `write` 調用。
+基於這兩個概念，我們來分析圖中的異常：
 
-3.  **排除其他可能性**:
-    *   **排除 WebSocket**: 如果是 WebSocket 寫入阻塞，我們應該看到 `gorilla/websocket` 或 `net/http` 相關函數出現在 Top 列表，但它們**完全缺席**。
-    *   **排除業務邏輯**: 我們沒有看到任何 `gms` 或 `usecase` 相關的業務函數佔用 CPU。
+1.  **異常的 Syscall (系統調用)**:
+    *   **現象**: `syscall.syscall` 的 Flat 佔據了 **50.61%**。
+    *   **白話文**: CPU 有一半的時間都在執行「打電話給作業系統 (OS)」這個動作。
+    *   **推導**: 正常的應用程式主要是在算邏輯（User Space），不應該一直打擾 OS（Kernel Space）。這麼高的佔比，意味著程式在瘋狂地進行 I/O 操作（讀寫網路或檔案），因為只有 I/O 才需要頻繁請求 OS 介入。
+
+2.  **隱形的兇手 (syscall.write)**:
+    *   **現象**: `syscall.write` 的 Flat 是 0%，但 **Cum 高達 46.53%**。
+    *   **白話文**: `syscall.write` 這個函數本身沒做什麼事（Flat=0），但它觸發的一系列後續操作（在 OS 內部）耗費了大量時間。
+    *   **推導**: 這證實了大量的時間花在「寫入」操作上。結合我們開啟了 `console` 模式，這意味著程式正試圖把大量日誌寫入到終端機。終端機的寫入通常是同步且緩慢的，導致 Goroutine 被阻塞。
+
+3.  **排除法 (為什麼不是 WebSocket?)**:
+    *   **現象**: WebSocket 相關函數 `advanceFrame` 的 Flat 只有 0.20%。
+    *   **推導**: 如果是 WebSocket 處理封包太慢，這個數值應該會很高。現在這麼低，說明 WebSocket 協議解析本身非常健康，瓶頸不在這裡。
 
 #### 4. 結論
-綜合以上證據，我們可以斷定：**日誌系統 (Console Writer) 是導致系統阻塞的元兇**。它產生了過量的 Syscall，導致 Goroutine 被頻繁 Context Switch 和阻塞，無法及時處理網路 I/O，最終引發 TCP Buffer 溢出和 Connection Reset。
+**案情重現**:
+1.  程式開啟了 `console` 日誌模式。
+2.  大量日誌產生，觸發無數次 `syscall.write`。
+3.  由於終端機 I/O 慢，這些寫入操作阻塞了關鍵的 Goroutine。
+4.  Goroutine 忙著等日誌寫完，沒空去讀取網路數據。
+5.  OS 的 TCP Buffer 滿了，新的封包進不來。
+6.  OS 對客戶端發送 RST，連接斷開。
+
+**兇手**: **同步的 Console Logging**。
 
 #### 5. 驗證
 將日誌格式改為 `json` 後，`syscall` 佔比大幅下降，`Connection Reset` 消失，證實了我們的推導。
