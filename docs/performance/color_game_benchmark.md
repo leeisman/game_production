@@ -56,8 +56,12 @@
     *   當 TCP Buffer 滿了，OS 會拒絕客戶端發送的新封包，並最終發送 `RST` (Reset) 封包斷開連接。
     *   **特徵**: Server CPU 可能不高，但客戶端大量斷線，且 Server 日誌停滯。
     *   **診斷**: 觀察 Gateway 的 `CloseWithReason` 日誌，如果大量出現 `read_error` (connection reset) 或 `timeout`，且同時 Server Console 輸出變慢，極大機率是 I/O 阻塞。
-*   **原因 2**: Server 端 Panic 或崩潰 (檢查 Server 日誌)。
-*   **原因 3**: 防火牆或 Load Balancer 超時 (檢查 Idle Timeout 設定)。
+*   **原因 2**: **CPU 阻塞 (Log Formatting Overhead)**。
+    *   即使使用了 Async Writer，如果日誌格式設為 `console`，`zerolog` 仍需消耗大量 CPU 進行字串格式化、著色和排序。
+    *   在高併發下，這種 CPU 開銷會搶佔業務邏輯的資源，導致處理變慢，最終引發 TCP Buffer 溢出。
+    *   **解法**: 務必使用 `json` 格式，它是零分配且極快的。
+*   **原因 3**: Server 端 Panic 或崩潰 (檢查 Server 日誌)。
+*   **原因 4**: 防火牆或 Load Balancer 超時 (檢查 Idle Timeout 設定)。
 
 ### Error: `context deadline exceeded` (Login)
 *   **原因**: DB 連接池滿了，或者 CPU 過高導致處理變慢。
@@ -94,10 +98,43 @@
     top -o mem   # 按記憶體排序
     ```
 
+### 5. 深入分析：如何使用 pprof 定位 I/O 瓶頸 (Case Study)
+
+在壓測過程中，我們發現系統出現 `Connection Reset`，但 CPU 使用率看似不高。我們使用 `pprof` 進行了科學排查，以下是分析過程。
+
+#### 1. 抓取數據
+使用 `make pprof-cpu` 抓取 30 秒的 CPU Profile。
+
+#### 2. 觀察 Top View (關鍵證據)
+下圖是我們在問題發生時抓取的 pprof Top View：
+
+![pprof_console_bottleneck](images/pprof_console_bottleneck.png)
+
+#### 3. 數據解讀 (Sherlock Holmes Style)
+
+我們從圖中觀察到幾個異常現象，並據此進行推導：
+
+1.  **異常的 Syscall 佔比**:
+    *   **現象**: `syscall.syscall` 佔據了 **48.65%** 的 CPU 時間，排名第一。
+    *   **推導**: 正常的 Go 應用程式（即使是 I/O 密集型）不應有如此高的 Syscall 佔比。這意味著程式正在**極度頻繁地**與 OS 內核交互（通常是 `read` 或 `write`）。
+
+2.  **尋找嫌疑人 (Callers)**:
+    *   **現象**: 在 Top 10 列表中，除了 Runtime (`runtime.kevent`, `runtime.mallocgc`) 和 System (`internal/poll`) 函數外，**唯一的應用層函數**是 `github.com/rs/zerolog.(*ConsoleWriter).Write` (2.70%)。
+    *   **推導**: 雖然 2.7% 看起來不多，但它是導致大量 `syscall` 的直接原因。Console 輸出涉及大量的字串格式化和細碎的 `write` 調用。
+
+3.  **排除其他可能性**:
+    *   **排除 WebSocket**: 如果是 WebSocket 寫入阻塞，我們應該看到 `gorilla/websocket` 或 `net/http` 相關函數出現在 Top 列表，但它們**完全缺席**。
+    *   **排除業務邏輯**: 我們沒有看到任何 `gms` 或 `usecase` 相關的業務函數佔用 CPU。
+
+#### 4. 結論
+綜合以上證據，我們可以斷定：**日誌系統 (Console Writer) 是導致系統阻塞的元兇**。它產生了過量的 Syscall，導致 Goroutine 被頻繁 Context Switch 和阻塞，無法及時處理網路 I/O，最終引發 TCP Buffer 溢出和 Connection Reset。
+
+#### 5. 驗證
+將日誌格式改為 `json` 後，`syscall` 佔比大幅下降，`Connection Reset` 消失，證實了我們的推導。
 
 ---
 
-## 5. 最終結果 (Final Results)
+## 6. 最終結果 (Final Results)
 
 經過上述優化，系統在本地環境下成功達成：
 *   **CCU**: 12,500+ 用戶同時在線。
