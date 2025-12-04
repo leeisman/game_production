@@ -108,7 +108,7 @@
 #### 2. 觀察 Top View (關鍵證據)
 下圖是我們在問題發生時抓取的 pprof Top List View：
 
-![pprof_top_list](./images/pprof_top_list.png)
+<img src="images/pprof_top_list.png" alt="pprof_top_list" width="800" />
 
 #### 3. 數據解讀 (Sherlock Holmes Style)
 
@@ -147,7 +147,7 @@
 #### 5. 驗證 (After Optimization)
 將日誌格式改為 `json` 後，我們再次抓取 pprof 數據，結果如下圖所示：
 
-![pprof_top_list_json](./images/pprof_top_list_json.png)
+<img src="images/pprof_top_list_json.png" alt="pprof_top_list_json" width="800" />
 
 **對比分析**：
 1.  **日誌阻塞消失**: Top 列表中不再看到 `zerolog` 或 `ConsoleWriter` 的身影，證明我們成功消除了日誌格式化帶來的 CPU 和 I/O 負擔。
@@ -204,7 +204,7 @@ make monitor-conns
 
 透過 `monitor-io` (netstat)，我們捕捉到了 WebSocket 服務典型的流量特徵：**極端的脈衝式負載**。
 
-![netstat_burst](./images/netstat_burst.png)
+<img src="images/netstat_burst.png" alt="netstat_burst" width="800" />
 
 **數據解讀**：
 
