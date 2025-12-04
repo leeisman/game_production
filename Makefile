@@ -34,6 +34,12 @@ monitor-io:
 # Monitor Connections and Load
 monitor-conns:
 	@./scripts/monitor_conns.sh
+
+# Monitor System Interrupts and Context Switches (Proof of I/O Bottleneck)
+monitor-sys:
+	@echo "📊 Monitoring System CPU & Load (vmstat not found, using top)..."
+	@echo "High 'sys' % = Kernel processing I/O interrupts"
+	@top -l 0 -s 1 -n 0 | grep --line-buffered -E "CPU usage|Load Avg|Networks"
 run-color-robot:
 	@echo "🤖 Starting Color Game Test Robot with $(USERS) users..."
 	@go run cmd/color_game/test_robot/main.go -users $(USERS) -log-level info

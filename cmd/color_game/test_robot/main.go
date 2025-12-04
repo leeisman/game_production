@@ -75,7 +75,7 @@ func main() {
 
 	// Create logs directory if not exists
 	// InitWithFile handles directory creation, rotation, and multi-output
-	logger.InitWithFile("logs/color_game/test_robot.log", *logLevel, "console")
+	logger.InitWithFile("logs/color_game/robot.log", *logLevel, "console", true)
 	defer logger.Flush()
 
 	fmt.Printf("🤖 Starting Test Robot... Logs are being written to logs/color_game/test_robot.log (rotating)\n")

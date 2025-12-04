@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
+	_ "net/http/pprof" // Register pprof handlers
 	"os"
 	"os/signal"
 	"sync"
@@ -23,7 +25,7 @@ import (
 	colorgameGSRedis "github.com/frankieli/game_product/internal/modules/color_game/gs/repository/redis"
 	colorgameGSUseCase "github.com/frankieli/game_product/internal/modules/color_game/gs/usecase"
 	gatewayHttp "github.com/frankieli/game_product/internal/modules/gateway/adapter/http"
-	gatewayAdapter "github.com/frankieli/game_product/internal/modules/gateway/adapter/local" // Updated to local
+	gatewayAdapter "github.com/frankieli/game_product/internal/modules/gateway/adapter/local"
 	gatewayUseCase "github.com/frankieli/game_product/internal/modules/gateway/usecase"
 	"github.com/frankieli/game_product/internal/modules/gateway/ws"
 	userHttp "github.com/frankieli/game_product/internal/modules/user/adapter/http"
@@ -40,9 +42,26 @@ import (
 )
 
 func main() {
+	// Parse command line flags
+	pprofPort := flag.String("pprof-port", "", "Port to run pprof server on (e.g., 6060)")
+	background := flag.Bool("d", false, "Run in background mode (disable console logging)")
+	flag.Parse()
+
 	// Initialize logger
-	logger.InitWithFile("logs/color_game/monolith.log", "info", "console")
+	// If background is true, disable console logging (enableConsole = false)
+	logger.InitWithFile("logs/color_game/monolith.log", "info", "json", !*background)
 	defer logger.Flush()
+
+	// Start pprof server if requested
+	if *pprofPort != "" {
+		go func() {
+			addr := "localhost:" + *pprofPort
+			logger.InfoGlobal().Str("addr", addr).Msg("📈 Starting pprof server")
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				logger.ErrorGlobal().Err(err).Msg("Failed to start pprof server")
+			}
+		}()
+	}
 
 	// Also print to console that we started
 	fmt.Println("🚀 Starting Color Game Monolith... Logs are being written to logs/color_game/monolith.log (rotating)")
@@ -127,7 +146,6 @@ func main() {
 	db.AutoMigrate(&colorgameGMSDomain.GameRound{}, &colorgameGSDomain.BetOrder{})
 	gameRoundRepo := colorgameGMSRepo.NewGameRoundRepository(db)
 
-	// Create Broadcasters
 	// Create Broadcasters
 	// Gateway listening to GMS events (and forwarding to WS)
 	broadcaster := gatewayAdapter.NewBroadcaster(wsManager)

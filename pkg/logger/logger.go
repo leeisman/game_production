@@ -39,7 +39,7 @@ type Config struct {
 
 // InitWithFile initializes logger with console and file output
 // It handles directory creation, log rotation, and multi-output setup.
-func InitWithFile(filename string, level string, format string) {
+func InitWithFile(filename string, level string, format string, enableConsole bool) {
 	// Ensure directory exists
 	dir := filepath.Dir(filename)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -54,13 +54,19 @@ func InitWithFile(filename string, level string, format string) {
 		Compress:   true, // compress old files
 	}
 
-	// Use MultiWriter to write to both Console and File
-	multiOutput := io.MultiWriter(os.Stdout, logFile)
+	var output io.Writer
+	if enableConsole {
+		// Use MultiWriter to write to both Console and File
+		output = io.MultiWriter(os.Stdout, logFile)
+	} else {
+		// Write to File only
+		output = logFile
+	}
 
 	Init(Config{
 		Level:  level,
 		Format: format,
-		Output: multiOutput,
+		Output: output,
 	})
 }
 

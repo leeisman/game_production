@@ -37,12 +37,12 @@ func TestLoggerFlushOnPanic(t *testing.T) {
 	assert.Contains(t, content, "This message should be flushed before panic", "Buffered log was not flushed on panic")
 
 	// Cleanup
-	os.Remove("panic_test.log")
+	os.Remove("logs/panic_test.log")
 }
 
 func doLoggerWork() {
 	// Initialize logger with a file
-	logger.InitWithFile("panic_test.log", "info", "json")
+	logger.InitWithFile("logs/panic_test.log", "info", "console", true)
 
 	// Ensure Flush is called on panic via defer
 	defer logger.Flush()
