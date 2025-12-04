@@ -75,6 +75,7 @@
 *   **Log at Boundary**: 錯誤通常在最外層 (Adapter/Handler) 記錄，避免重複日誌。
 
 ### 4.3 Testing
+*   **Location**: 所有測試代碼 (Unit & Integration) 應統一放置在 `tests/` 目錄下，保持源碼目錄整潔。
 *   **Unit Test**: 針對 UseCase 和 Domain Logic。
 *   **Integration Test**: 針對 Database 和 External Service。
 *   **Test Robot**: 使用 `cmd/color_game/test_robot` 進行端對端壓測。
