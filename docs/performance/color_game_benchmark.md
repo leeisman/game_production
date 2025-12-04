@@ -150,11 +150,14 @@
 ![pprof_top_list_json](images/pprof_top_list_json.png)
 
 **對比分析**：
-1.  **Syscall 消失**: `syscall.syscall` 的 Flat 佔比從 **50% 驟降至 0.45%**。這證明 I/O 阻塞已完全消除。
-2.  **業務邏輯回歸**:
-    *   現在的 CPU 熱點是 `blowfish.EncryptBlock` (20.91%)，這是處理用戶登入時的密碼加密邏輯。
-    *   這是一個健康的 **CPU Bound** 狀態，說明系統正在全力處理業務請求，而不是在等待 I/O。
-3.  **結果**: `Connection Reset` 錯誤消失，系統能夠穩定支撐 9000+ CCU。
+1.  **日誌阻塞消失**: Top 列表中不再看到 `zerolog` 或 `ConsoleWriter` 的身影，證明我們成功消除了日誌格式化帶來的 CPU 和 I/O 負擔。
+2.  **Syscall 依然高 (38.75%)，但性質變了**:
+    *   `syscall.syscall` 仍然佔據高位，但這是由 **網路 I/O (WebSocket)** 驅動的，而非日誌。
+    *   證據：`runtime.kevent` (13.32%) 和 WebSocket 相關函數 (`advanceFrame`, `NextReader`) 的 Cum 佔比顯著上升。
+3.  **業務邏輯回歸**:
+    *   CPU 熱點轉移到了 `blowfish.EncryptBlock` (登入加密) 和 `PlayerUseCase.PlaceBet` (下注邏輯)。
+    *   這是一個健康的狀態，說明系統正在全力處理真實的業務請求。
+4.  **結果**: `Connection Reset` 錯誤消失，系統能夠穩定支撐 9000+ CCU。
 
 ---
 
