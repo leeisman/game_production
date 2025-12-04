@@ -83,7 +83,7 @@
 
 ## 5. 當前系統狀態 (Current State)
 
-*   **架構**: Modular Monolith (Gateway, Auth, ColorGame, GMS, Wallet)。
+*   **架構**: Modular Monolith (Gateway, User, ColorGame, GMS, Wallet)。
 *   **通訊**: WebSocket (Client <-> Gateway), gRPC (Internal, 準備中)。
 *   **日誌**: Zerolog + SmartWriter (Async Buffered)。
 *   **協議**: JSON (Header + Body)。
