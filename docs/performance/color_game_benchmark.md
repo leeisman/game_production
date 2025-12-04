@@ -202,6 +202,20 @@ make monitor-conns
 
 ![monitor_load](images/monitor_load.png)
 
+#### 3. 監控系統 CPU (System CPU) - 確診 I/O 瓶頸
+執行指令：
+```bash
+make monitor-sys
+# 實際執行: top -l 0 -s 1 -n 0 | grep ...
+```
+
+![monitor_sys](images/monitor_sys.png)
+
+**數據解讀 (鐵證)**：
+*   **`sys` (System CPU)**: 截圖中可見 `sys` 飆升至 **29.93%**。這代表 CPU 有 30% 的時間都在處理內核任務（網卡中斷、記憶體拷貝）。對於應用伺服器來說，超過 20% 即為高 I/O 負載。
+*   **`user` vs `sys`**: 業務邏輯 (`user`) 佔 43%，I/O (`sys`) 佔 29%。這意味著**每跑 1.5 分鐘業務，就要花 1 分鐘處理 I/O**。
+*   **`idle` 的假象**: 雖然 `idle` 還有 27%，但因為 CPU 被頻繁的中斷打斷（碎片化），導致 Load Avg 依然很高。這證明了瓶頸不在於計算能力不足，而在於 I/O 吞吐量。
+
 ### 6.3 流量特徵分析：脈衝式廣播 (Bursty Traffic)
 
 透過 `monitor-io` (netstat)，我們捕捉到了 WebSocket 服務典型的流量特徵：**極端的脈衝式負載**。
