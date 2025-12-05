@@ -4,7 +4,7 @@
 
 ### 1. Command 命名規範
 - **所有 command 類型必須在 `colorgame.proto` 的 `CommandType` enum 中定義**
-- 使用 **PascalCase** 命名（例如：`PlaceBetREQ`、`ColorGameStateBRC`）
+- 使用 **PascalCase** 命名（例如：`PlaceBetREQ`、`ColorGameRoundStateBRC`）
 - 命名後綴規範：
   - `REQ` - 客戶端請求（Client → Server）
   - `RSP` - 服務端回應（Server → Client）
@@ -158,7 +158,7 @@ message GetStateRsp {
 
 ### 服務端 → 客戶端（BRC - 廣播）
 
-#### ColorGameStateBRC
+#### ColorGameRoundStateBRC
 **Proto 定義**: `ColorGameRoundStateBRC`
 ```protobuf
 message ColorGameRoundStateBRC {
@@ -173,7 +173,7 @@ message ColorGameRoundStateBRC {
 ```json
 {
   "game_code": "color_game",
-  "command": "ColorGameStateBRC",
+  "command": "ColorGameRoundStateBRC",
   "data": {
     "round_id": "20251205123456",
     "state": "EVENT_TYPE_BETTING_STARTED",
