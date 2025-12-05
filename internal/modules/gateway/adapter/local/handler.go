@@ -36,7 +36,7 @@ func (h *Handler) convertEvent(gameCode string, event proto.Message) []byte {
 
 		jsonMsg, err := json.Marshal(map[string]interface{}{
 			"game_code": gameCode,
-			"command":   "ColorGameStateBRC",
+			"command":   "ColorGameRoundStateBRC",
 			"data":      finalData,
 		})
 		if err == nil {

@@ -121,7 +121,7 @@ ws.onmessage = (event) => {
   
   // 處理不同類型的訊息
   switch(message.command) {
-    case "ColorGameStateBRC":
+    case "ColorGameRoundStateBRC":
       // 遊戲狀態更新
       console.log("遊戲狀態:", message.data.state);
       console.log("剩餘時間:", message.data.left_time, "秒");
@@ -395,7 +395,7 @@ ROUND_STARTED → BETTING_STARTED → DRAWING → RESULT → ROUND_ENDED → (�
 #### 1. ROUND_STARTED
 ```json
 {
-    "command": "ColorGameStateBRC",
+    "command": "ColorGameRoundStateBRC",
     "data": {
         "round_id": "20251205123456",
         "state": "EVENT_TYPE_ROUND_STARTED",
@@ -411,7 +411,7 @@ ROUND_STARTED → BETTING_STARTED → DRAWING → RESULT → ROUND_ENDED → (�
 #### 2. BETTING_STARTED
 ```json
 {
-    "command": "ColorGameStateBRC",
+    "command": "ColorGameRoundStateBRC",
     "data": {
         "round_id": "20251205123456",
         "state": "EVENT_TYPE_BETTING_STARTED",
@@ -428,7 +428,7 @@ ROUND_STARTED → BETTING_STARTED → DRAWING → RESULT → ROUND_ENDED → (�
 #### 3. DRAWING
 ```json
 {
-    "command": "ColorGameStateBRC",
+    "command": "ColorGameRoundStateBRC",
     "data": {
         "round_id": "20251205123456",
         "state": "EVENT_TYPE_DRAWING",
@@ -458,7 +458,7 @@ ROUND_STARTED → BETTING_STARTED → DRAWING → RESULT → ROUND_ENDED → (�
 #### 5. ROUND_ENDED
 ```json
 {
-    "command": "ColorGameStateBRC",
+    "command": "ColorGameRoundStateBRC",
     "data": {
         "round_id": "20251205123456",
         "state": "EVENT_TYPE_ROUND_ENDED",

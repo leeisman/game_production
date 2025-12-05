@@ -88,7 +88,7 @@ enum CommandType {
 - `ColorGamePlaceBetRSP` - 下注回應
 - `ColorGameGetStateREQ` - 獲取狀態請求
 - `ColorGameGetStateRSP` - 獲取狀態回應
-- `ColorGameStateBRC` - 遊戲狀態廣播
+- `ColorGameRoundStateBRC` - 遊戲狀態廣播
 - `ColorGameResultBRC` - 開獎結果廣播
 - `ColorGameSettlementBRC` - 結算廣播
 

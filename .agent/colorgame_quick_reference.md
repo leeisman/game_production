@@ -63,7 +63,7 @@
 ```json
 {
   "game_code": "color_game",
-  "command": "ColorGameStateBRC",
+  "command": "ColorGameRoundStateBRC",
   "data": {
     "round_id": "20251205123456",
     "state": "EVENT_TYPE_BETTING_STARTED",
@@ -166,7 +166,7 @@ ws.onmessage = (event) => {
   const message = JSON.parse(event.data);
   
   switch(message.command) {
-    case "ColorGameStateBRC":
+    case "ColorGameRoundStateBRC":
       // 更新遊戲狀態
       updateGameState(message.data);
       break;
