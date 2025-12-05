@@ -314,39 +314,22 @@ func (r *Robot) handleMessage(message []byte, currentRoundID *string, betTimer *
 	}
 
 	switch event.Command {
-	case "betting_started":
-		var data struct {
-			RoundID string `json:"round_id"`
-		}
-		if err := json.Unmarshal(event.Data, &data); err != nil {
-			logger.Warn(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Failed to parse betting_started data")
-			return
-		}
-		*currentRoundID = data.RoundID
-		r.scheduleBet(betTimer)
-
-	case "game_state":
+	case "ColorGameRoundStateBRC":
 		var data struct {
 			RoundID string `json:"round_id"`
 			State   string `json:"state"`
 		}
-		// event.Data is now the nested "data" object which contains "data" field if it was nested in broadcaster
-		// But wait, in broadcaster we did:
-		// "data": map[string]interface{}{ "round_id": ..., "data": innerData }
-		// So event.Data here is that map.
 		if err := json.Unmarshal(event.Data, &data); err != nil {
 			logger.Warn(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Failed to parse game_state data")
 			return
 		}
 		logger.Info(r.ctx).Int("robot_id", r.ID).Str("round_id", data.RoundID).Str("state", data.State).Msg("Received game state")
-		if data.State == "BETTING" {
+		if data.State == "GAME_STATE_BETTING" {
 			*currentRoundID = data.RoundID
 			r.scheduleBet(betTimer)
 		}
 
-	case "result":
-		// logger.Info(r.ctx).Int("robot_id", r.ID).Msg("Saw result")
-	case "settlement":
+	case "ColorGameSettlementBRC":
 		// logger.Info(r.ctx).Int("robot_id", r.ID).Msg("Received settlement")
 	}
 }
@@ -363,8 +346,8 @@ func (r *Robot) performBet(roundID string) {
 	amount := (rand.Intn(10) + 1) * 10 // 10, 20, ..., 100
 
 	req := map[string]interface{}{
-		"game":    "color_game",
-		"command": "place_bet",
+		"game_code": "color_game",
+		"command":   "ColorGamePlaceBetREQ",
 		"data": map[string]interface{}{
 			"color":  color,
 			"amount": amount,
