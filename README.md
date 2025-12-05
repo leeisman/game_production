@@ -1,18 +1,45 @@
-# Color Game Platform
+# Game Production Platform
 
-A scalable, real-time multiplayer color betting game platform built with Go.
-This project demonstrates a **Modular Monolith** architecture that can seamlessly evolve into **Microservices**.
+[![中文](https://img.shields.io/badge/Language-中文-blue.svg)](./README_CN.md)
 
-## 🌟 Key Features
+> A production-grade framework for building scalable real-time multiplayer games in Go.
 
-*   **Modular Architecture**: Designed with Clean Architecture principles, allowing modules (GMS, User, Gateway) to be deployed as a Monolith or distributed Microservices.
-*   **High Performance**: Optimized for high concurrency, supporting **10,000+ concurrent users** on a single node.
-    *   **Smart Buffered Logging**: Async I/O with immediate error flush.
-    *   **Efficient WebSocket**: Non-blocking broadcast with fail-fast strategy.
-*   **Real-time Gaming**:
-    *   **GMS (Game Manager Service)**: Manages game state (Round, Betting, Drawing, Result) using a robust State Machine.
-    *   **Gateway**: Manages WebSocket connections and broadcasts game events to clients.
-*   **Type Safety**: All game events and interactions are defined using Protocol Buffers (gRPC).
+This project serves as a **Reference Architecture** for building high-concurrency game backends. It uses **"Color Game"** (a fast-paced multiplayer betting game) as a concrete implementation to demonstrate how to handle real-world challenges like state synchronization, atomic settlements, and broadcast storms.
+
+## 🌟 Vision & Goal
+
+Our goal is to provide a "Battle-Tested" foundation for game developers, solving common infrastructure problems out-of-the-box so you can focus on Gameplay.
+
+*   **Production Ready**: Not just a toy project. Includes graceful shutdown, structured logging, metrics hooks, and docker builds.
+*   **Architecture First**: Balances simplicity (Monolith) with scalability (Microservices).
+*   **Live Demo Case**: The "Color Game" module showcases a complete lifecycle of a betting game (Round -> Bet -> Settlement).
+
+### 1. Modular Monolith Architecture
+*   **Clean Architecture**: Strictly follows Domain-Driven Design (DDD) with clear separation of layers (Domain, Usecase, Adapter, Repository).
+*   **Flexible Deployment**: Supports both **Monolith** and **Microservices** deployment modes with the same codebase.
+    *   **Monolith**: Ideal for development and small-to-medium deployments (zero RPC overhead, simple ops).
+    *   **Microservices**: Suitable for large-scale scaling with gRPC communication between modules.
+
+### 2. Proto-Driven Development
+*   **Single Source of Truth**: All APIs, events, and data structures are defined in `shared/proto`.
+*   **Type Safety**: Auto-generated Go code ensures type-safe communication between frontend, backend, and services.
+*   **Standardized Protocol**: Unified WebSocket envelope format (`game_code`, `command`, `data`) and error code standards.
+
+### 3. High Performance Gateway
+*   **10k+ Concurrent Users**: Benchmarked to support 10,000+ simultaneous online players on a single node.
+*   **Fail-Fast Broadcast**: Broadcast mechanism uses a fail-fast strategy to prevent slow connections from blocking the system.
+*   **Optimized I/O**: Utilizes `epoll` (via net/http) and optimized WebSocket read/write pumps.
+
+### 4. Smart Centralized Logging
+*   **SmartWriter**: Custom log buffering mechanism.
+    *   **Normal**: Asynchronous writing to reduce I/O blocking.
+    *   **Panic/Error**: Synchronous immediate flush to ensure critical logs are preserved.
+*   **Zero Allocation**: High-performance logging based on Zerolog wrapper.
+
+### 5. Robust Game Core
+*   **State Machine**: Manages game flow (Start -> Betting -> Drawing -> Result) with a rigorous state machine.
+*   **Atomic Settlement**: Supports batch settlement and transactions to ensure atomicity of wallet deductions and payouts.
+*   **Reconnection Safe**: Players can immediately retrieve the current complete state upon reconnection.
 
 ---
 
@@ -20,17 +47,10 @@ This project demonstrates a **Modular Monolith** architecture that can seamlessl
 
 Detailed documentation is available in the `docs/` directory:
 
-*   **Architecture & Design**:
-    *   [Project Evolution](docs/ai/project_evolution.md): History of architectural decisions and design philosophy.
-    *   [Gateway Module](docs/module/gateway/README.md): WebSocket design and protocol.
-    *   [User Module](docs/module/user/README.md): User authentication and management.
-*   **Performance**:
-    *   [Benchmark Report](docs/performance/color_game_benchmark.md): How we achieved 10k+ CCU.
-*   **Shared Components**:
-    *   [Logger System](docs/pkg/logger.md): SmartWriter and logging strategy.
-    *   [Protobuf Definitions](docs/shared/protobuf.md): Service interfaces and message standards.
-*   **Operations**:
-    *   [Service Guide](docs/cmd/color_game.md): Startup and troubleshooting guide.
+*   **Architecture**: [Design Principles](docs/shared/design_principles.md) | [Project Evolution](docs/ai/project_evolution.md)
+*   **Modules**: [Gateway](docs/module/gateway/README.md) | [User](docs/module/user/README.md)
+*   **Guides**: [Service Startup Guide](docs/cmd/color_game.md) | [WebSocket Protocol](docs/websocket_protocol.md)
+*   **Performance**: [Benchmark Report](docs/performance/color_game_benchmark.md)
 
 ---
 
@@ -53,30 +73,30 @@ See [Benchmark Report](docs/performance/color_game_benchmark.md) for details.
 game_product/
 ├── cmd/
 │   └── color_game/
-│       ├── monolith/           # Single process deployment (Recommended)
-│       └── microservices/      # Distributed deployment
+│       ├── monolith/           # Monolith entry point (Recommended)
+│       └── microservices/      # Microservices entry point
 ├── internal/
 │   └── modules/
-│       ├── color_game/         # Game logic
+│       ├── color_game/         # Game Logic (GMS, GS)
 │       ├── gateway/            # WebSocket Gateway
-│       └── user/               # User & Auth logic
-├── pkg/                        # Public libraries (Logger, etc.)
+│       └── user/               # User & Auth Logic
+├── pkg/                        # Public Libraries (Logger, Service interfaces)
 ├── shared/
-│   └── proto/                  # gRPC protocol definitions
-└── docs/                       # Comprehensive documentation
+│   └── proto/                  # Protobuf Definitions (API Contracts)
+└── docs/                       # Project Documentation
 ```
 
 ---
 
-## 📡 API & Protocol
+## 📡 Protocol Snapshot
 
-The platform uses WebSocket for client communication with a standardized **Header + Body** JSON format.
+ The platform uses a standardized WebSocket JSON protocol:
 
 **Client Request (Place Bet):**
 ```json
 {
-  "game": "color_game",
-  "command": "place_bet",
+  "game_code": "color_game",
+  "command": "ColorGamePlaceBetREQ",
   "data": {
     "color": "red",
     "amount": 100
@@ -87,12 +107,12 @@ The platform uses WebSocket for client communication with a standardized **Heade
 **Server Broadcast (Game State):**
 ```json
 {
-  "game": "color_game",
-  "command": "game_state",
+  "game_code": "color_game",
+  "command": "ColorGameRoundStateBRC",
   "data": {
     "round_id": "20231204120000",
-    "state": "BETTING",
-    "countdown": 10
+    "state": "GAME_STATE_BETTING",
+    "left_time": 10
   }
 }
 ```
@@ -103,17 +123,17 @@ The platform uses WebSocket for client communication with a standardized **Heade
 
 ### Prerequisites
 *   Go 1.24+
-*   Redis (Optional)
 *   PostgreSQL
+*   Redis (Optional but recommended)
 
-### Running Monolith (Recommended)
+### Running Monolith
 
 ```bash
 # Start the service
 go run cmd/color_game/monolith/main.go
 ```
 
-The service will start on port `8080`.
+The service will start on port `8081`.
 
 ---
 
