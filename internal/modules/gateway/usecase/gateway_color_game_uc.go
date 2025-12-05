@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/frankieli/game_product/pkg/logger"
 	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
@@ -27,12 +28,6 @@ func (uc *GatewayUseCase) handleColorGame(ctx context.Context, userID int64, com
 			return nil, fmt.Errorf("invalid place_bet payload: %w", err)
 		}
 
-		rsp, err := uc.colorGameSvc.PlaceBet(ctx, &pbColorGame.ColorGamePlaceBetReq{
-			UserId: userID,
-			Color:  payload.Color,
-			Amount: payload.Amount,
-		})
-
 		// Helper to build error response
 		buildError := func(errCode pbCommon.ErrorCode, errMsg string) ([]byte, error) {
 			logger.Warn(ctx).
@@ -52,6 +47,16 @@ func (uc *GatewayUseCase) handleColorGame(ctx context.Context, userID int64, com
 			})
 		}
 
+		colorEnumVal, ok := pbColorGame.ColorGameReward_value["REWARD_"+strings.ToUpper(payload.Color)]
+		if !ok {
+			return buildError(pbCommon.ErrorCode_INVALID_BET_OPTION, fmt.Sprintf("invalid color: %s", payload.Color))
+		}
+
+		rsp, err := uc.colorGameSvc.PlaceBet(ctx, &pbColorGame.ColorGamePlaceBetReq{
+			UserId: userID,
+			Color:  pbColorGame.ColorGameReward(colorEnumVal),
+			Amount: payload.Amount,
+		})
 		if err != nil {
 			return buildError(pbCommon.ErrorCode_INTERNAL_ERROR, err.Error())
 		}

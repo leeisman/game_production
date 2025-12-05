@@ -11,6 +11,7 @@ import (
 	"github.com/frankieli/game_product/internal/modules/color_game/gms/machine"
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/frankieli/game_product/pkg/service"
+	"github.com/frankieli/game_product/pkg/service/color_game"
 	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
 )
 
@@ -21,13 +22,13 @@ type GMSUseCase struct {
 	betPlayers         map[string]map[int64]struct{} // roundID -> set of userIDs
 	betAmount          map[string]float64            // roundID -> total bet amount
 	gatewayBroadcaster service.GatewayService
-	gsBroadcaster      service.GSBroadcaster
+	gsBroadcaster      color_game.ColorGameGSService
 	gameRoundRepo      domain.GameRoundRepository
 	mu                 sync.RWMutex
 }
 
 // NewGMSUseCase creates a new round use case
-func NewGMSUseCase(stateMachine *machine.StateMachine, gatewayBroadcaster service.GatewayService, gsBroadcaster service.GSBroadcaster, gameRoundRepo domain.GameRoundRepository) *GMSUseCase {
+func NewGMSUseCase(stateMachine *machine.StateMachine, gatewayBroadcaster service.GatewayService, gsBroadcaster color_game.ColorGameGSService, gameRoundRepo domain.GameRoundRepository) *GMSUseCase {
 	uc := &GMSUseCase{
 		stateMachine:       stateMachine,
 		betCount:           make(map[string]int),
@@ -44,11 +45,11 @@ func NewGMSUseCase(stateMachine *machine.StateMachine, gatewayBroadcaster servic
 	return uc
 }
 
-// SetGSBroadcaster sets the GS broadcaster
-func (uc *GMSUseCase) SetGSBroadcaster(gsBroadcaster service.GSBroadcaster) {
+// SetGSService sets the GS service
+func (uc *GMSUseCase) SetGSService(gsService color_game.ColorGameGSService) {
 	uc.mu.Lock()
 	defer uc.mu.Unlock()
-	uc.gsBroadcaster = gsBroadcaster
+	uc.gsBroadcaster = gsService
 }
 
 // handleGameEvent handles game events from the state machine
@@ -56,17 +57,17 @@ func (uc *GMSUseCase) handleGameEvent(event machine.GameEvent) {
 	// Convert event to Proto
 	// Map state machine events to ColorGameRoundStateBRC
 	switch event.Type {
-	case pbColorGame.ColorGameEventType_EVENT_TYPE_ROUND_STARTED,
-		pbColorGame.ColorGameEventType_EVENT_TYPE_BETTING_STARTED,
-		pbColorGame.ColorGameEventType_EVENT_TYPE_DRAWING,
-		pbColorGame.ColorGameEventType_EVENT_TYPE_RESULT,
-		pbColorGame.ColorGameEventType_EVENT_TYPE_ROUND_ENDED,
-		pbColorGame.ColorGameEventType_EVENT_TYPE_MACHINE_STOPPED:
+	case pbColorGame.ColorGameState_GAME_STATE_ROUND_STARTED,
+		pbColorGame.ColorGameState_GAME_STATE_BETTING,
+		pbColorGame.ColorGameState_GAME_STATE_DRAWING,
+		pbColorGame.ColorGameState_GAME_STATE_RESULT,
+		pbColorGame.ColorGameState_GAME_STATE_ROUND_ENDED,
+		pbColorGame.ColorGameState_GAME_STATE_STOPPED:
 
 		// Convert event type enum to string
 		brc := &pbColorGame.ColorGameRoundStateBRC{
 			RoundId:             event.RoundID,
-			State:               event.Type.String(),
+			State:               event.Type,
 			BettingEndTimestamp: event.BettingEndTimestamp,
 			LeftTime:            event.LeftTime,
 		}
@@ -77,33 +78,15 @@ func (uc *GMSUseCase) handleGameEvent(event machine.GameEvent) {
 		}
 
 	default:
-		// For other events
-		pbEvent := &pbColorGame.ColorGameEvent{
-			Type:      event.Type,
-			RoundId:   event.RoundID,
-			Data:      fmt.Sprintf("%v", event.Data),
-			Timestamp: time.Now().Unix(),
-			LeftTime:  event.LeftTime,
-		}
-		if uc.gatewayBroadcaster != nil {
-			uc.gatewayBroadcaster.Broadcast("color_game", pbEvent)
-		}
-	}
-
-	// We still create pbEvent for DB logging and GS internal use if needed
-	pbEvent := &pbColorGame.ColorGameEvent{
-		Type:      event.Type,
-		RoundId:   event.RoundID,
-		Data:      fmt.Sprintf("%v", event.Data), // Convert data to string
-		Timestamp: time.Now().Unix(),
-		LeftTime:  event.LeftTime,
+		// For other events - ignore or log
+		// We are moving away from generic ColorGameEvent
 	}
 
 	// Update DB
 	if uc.gameRoundRepo != nil {
 		ctx := context.Background()
 		switch event.Type {
-		case pbColorGame.ColorGameEventType_EVENT_TYPE_ROUND_STARTED:
+		case pbColorGame.ColorGameState_GAME_STATE_ROUND_STARTED:
 			uc.gameRoundRepo.Create(ctx, &domain.GameRound{
 				RoundID:   event.RoundID,
 				GameCode:  "color_game",
@@ -111,7 +94,7 @@ func (uc *GMSUseCase) handleGameEvent(event machine.GameEvent) {
 				StartTime: time.Now(),
 			})
 
-		case pbColorGame.ColorGameEventType_EVENT_TYPE_RESULT:
+		case pbColorGame.ColorGameState_GAME_STATE_RESULT:
 			endTime := time.Now()
 
 			// Get stats from memory
@@ -121,7 +104,7 @@ func (uc *GMSUseCase) handleGameEvent(event machine.GameEvent) {
 			totalAmount := uc.betAmount[event.RoundID]
 			uc.mu.RUnlock()
 
-			uc.gameRoundRepo.UpdateResult(ctx, event.RoundID, fmt.Sprintf("%v", event.Data), &endTime, totalBets, totalPlayers, totalAmount)
+			uc.gameRoundRepo.UpdateResult(ctx, event.RoundID, event.Data.(pbColorGame.ColorGameReward).String(), &endTime, totalBets, totalPlayers, totalAmount)
 		}
 	}
 
@@ -129,8 +112,14 @@ func (uc *GMSUseCase) handleGameEvent(event machine.GameEvent) {
 	defer uc.mu.RUnlock()
 
 	// Broadcast to GS - result event (filtering done in adapter)
-	if pbEvent.Type == pbColorGame.ColorGameEventType_EVENT_TYPE_RESULT && uc.gsBroadcaster != nil {
-		uc.gsBroadcaster.GSBroadcast(pbEvent)
+	if event.Type == pbColorGame.ColorGameState_GAME_STATE_RESULT && uc.gsBroadcaster != nil {
+		req := &pbColorGame.ColorGameRoundResultReq{
+			RoundId: event.RoundID,
+			Result:  event.Data.(pbColorGame.ColorGameReward),
+		}
+		// Create a background context for the call
+		ctx := context.Background()
+		_, _ = uc.gsBroadcaster.RoundResult(ctx, req) // Ignore response for now as it's fire-and-forget
 	}
 }
 

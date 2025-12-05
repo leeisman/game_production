@@ -5,15 +5,14 @@ import (
 	"testing"
 	"time"
 
+	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
 	"google.golang.org/protobuf/proto"
 
 	gmsLocal "github.com/frankieli/game_product/internal/modules/color_game/gms/adapter/local"
-	gmsDomain "github.com/frankieli/game_product/internal/modules/color_game/gms/domain"
 	gmsMachine "github.com/frankieli/game_product/internal/modules/color_game/gms/machine"
 	gmsUC "github.com/frankieli/game_product/internal/modules/color_game/gms/usecase"
 	gsLocal "github.com/frankieli/game_product/internal/modules/color_game/gs/adapter/local"
 
-	gsDomain "github.com/frankieli/game_product/internal/modules/color_game/gs/domain"
 	gsRepo "github.com/frankieli/game_product/internal/modules/color_game/gs/repository/memory"
 	gsUC "github.com/frankieli/game_product/internal/modules/color_game/gs/usecase"
 
@@ -39,11 +38,20 @@ func (m *MockBroadcaster) SendToUser(userID int64, gameCode string, message prot
 	m.events = append(m.events, message)
 }
 
-func (m *MockBroadcaster) GSBroadcast(message proto.Message) {
+func (m *MockBroadcaster) RoundResult(ctx context.Context, req *pbColorGame.ColorGameRoundResultReq) (*pbColorGame.ColorGameRoundResultRsp, error) {
 	if m.events == nil {
 		m.events = make([]proto.Message, 0)
 	}
-	m.events = append(m.events, message)
+	m.events = append(m.events, req)
+	return &pbColorGame.ColorGameRoundResultRsp{}, nil
+}
+
+func (m *MockBroadcaster) PlaceBet(ctx context.Context, req *pbColorGame.ColorGamePlaceBetReq) (*pbColorGame.ColorGamePlaceBetRsp, error) {
+	return &pbColorGame.ColorGamePlaceBetRsp{}, nil
+}
+
+func (m *MockBroadcaster) GetState(ctx context.Context, req *pbColorGame.ColorGameGetStateReq) (*pbColorGame.ColorGameGetStateRsp, error) {
+	return &pbColorGame.ColorGameGetStateRsp{}, nil
 }
 
 func TestBetting(t *testing.T) {
@@ -81,13 +89,13 @@ func TestBetting(t *testing.T) {
 
 	// GS Broadcaster (listens to GMS events and triggers settlement)
 	// gsHandler implements both ColorGameService and GSBroadcaster
-	roundUC.SetGSBroadcaster(gsHandler)
+	roundUC.SetGSService(gsHandler)
 
 	// 3. Wait for betting state
 	var currentRoundID string
 	for i := 0; i < 20; i++ {
 		round, err := gsUseCase.GetCurrentRound(ctx, 1001)
-		if err == nil && round["state"] == string(gmsDomain.StateBetting) {
+		if err == nil && round["state"] == pbColorGame.ColorGameState_GAME_STATE_BETTING.String() {
 			currentRoundID = round["round_id"].(string)
 			break
 		}
@@ -103,13 +111,13 @@ func TestBetting(t *testing.T) {
 	// 4. Test: Multiple players place bets
 	testCases := []struct {
 		userID int64
-		color  gsDomain.Color
+		color  pbColorGame.ColorGameReward
 		amount int64
 	}{
-		{1001, gsDomain.ColorRed, 100},
-		{1002, gsDomain.ColorGreen, 200},
-		{1003, gsDomain.ColorRed, 150},
-		{1004, gsDomain.ColorBlue, 50},
+		{1001, pbColorGame.ColorGameReward_REWARD_RED, 100},
+		{1002, pbColorGame.ColorGameReward_REWARD_GREEN, 200},
+		{1003, pbColorGame.ColorGameReward_REWARD_RED, 150},
+		{1004, pbColorGame.ColorGameReward_REWARD_BLUE, 50},
 	}
 
 	// Set initial balance for all users
@@ -128,16 +136,16 @@ func TestBetting(t *testing.T) {
 
 	// 4.1 Test Accumulate Bet: User 1001 places another bet on Red
 	t.Log("Testing bet accumulation...")
-	originalBet, _ := betRepo.GetUserBet(ctx, currentRoundID, 1001, gsDomain.ColorRed)
+	originalBet, _ := betRepo.GetUserBet(ctx, currentRoundID, 1001, pbColorGame.ColorGameReward_REWARD_RED)
 	originalBetID := originalBet.BetID
 
-	_, err := gsUseCase.PlaceBet(ctx, 1001, gsDomain.ColorRed, 50)
+	_, err := gsUseCase.PlaceBet(ctx, 1001, pbColorGame.ColorGameReward_REWARD_RED, 50)
 	if err != nil {
 		t.Fatalf("Second PlaceBet failed for user 1001: %v", err)
 	}
 
 	// Verify accumulation
-	updatedBet, _ := betRepo.GetUserBet(ctx, currentRoundID, 1001, gsDomain.ColorRed)
+	updatedBet, _ := betRepo.GetUserBet(ctx, currentRoundID, 1001, pbColorGame.ColorGameReward_REWARD_RED)
 	if updatedBet.Amount != 150 { // 100 + 50
 		t.Errorf("Bet accumulation failed. Expected 150, got %d", updatedBet.Amount)
 	}

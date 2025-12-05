@@ -11,11 +11,11 @@ import (
 
 // GatewayUseCase handles gateway logic
 type GatewayUseCase struct {
-	colorGameSvc colorgame.ColorGameService
+	colorGameSvc colorgame.ColorGameGSService
 }
 
 // NewGatewayUseCase creates a new gateway use case
-func NewGatewayUseCase(colorGameSvc colorgame.ColorGameService) *GatewayUseCase {
+func NewGatewayUseCase(colorGameSvc colorgame.ColorGameGSService) *GatewayUseCase {
 	return &GatewayUseCase{
 		colorGameSvc: colorGameSvc,
 	}
@@ -23,7 +23,7 @@ func NewGatewayUseCase(colorGameSvc colorgame.ColorGameService) *GatewayUseCase 
 
 // RequestEnvelope defines the standard request structure
 type RequestEnvelope struct {
-	Game    string          `json:"game"`
+	Game    string          `json:"game_code"`
 	Command string          `json:"command"`
 	Data    json.RawMessage `json:"data"`
 }

@@ -4,11 +4,12 @@
 
 ### 1. Command 定義規範
 - **所有 command 必須在 `shared/proto/colorgame/colorgame.proto` 的 `CommandType` enum 中定義**
-- 使用 **PascalCase** 命名（例如：`PlaceBetREQ`、`ColorGameStateBRC`）
+- 使用 **PascalCase** 命名（例如：`ColorGamePlaceBetREQ`、`ColorGameRoundStateBRC`）
 - 命名後綴：
   - `REQ` - 客戶端請求（Client → Server）
   - `RSP` - 服務端回應（Server → Client）
   - `BRC` - 服務端廣播（Server → Clients）
+  - `ColorGame` 前綴 - 強制所有 ColorGame 模組指令使用此前綴
 
 ### 2. Data 內容規範
 - **所有 `data` 欄位的內容必須對應 proto 中定義的 message**
@@ -38,7 +39,7 @@
 | 301 | ROUND_NOT_ACTIVE | 回合未激活 |
 | 302 | INVALID_BET_AMOUNT | 下注金額無效 |
 
-## 標準消息格式
+## 標準消息格式 (Envelope)
 
 ```json
 {
@@ -55,13 +56,12 @@
 
 | Command | Proto Message | 方向 | 說明 |
 |---------|---------------|------|------|
-| `PlaceBetREQ` | `PlaceBetReq` | Client → Server | 下注請求 |
-| `PlaceBetRSP` | `PlaceBetRsp` | Server → Client | 下注回應 |
-| `GetStateREQ` | `GetStateReq` | Client → Server | 獲取狀態請求 |
-| `GetStateRSP` | `GetStateRsp` | Server → Client | 獲取狀態回應 |
-| `ColorGameStateBRC` | `ColorGameRoundStateBRC` | Server → Clients | 遊戲狀態廣播 |
-| `result` | `GameEvent` | Server → Clients | 開獎結果 |
-| `settlement` | 待定義 | Server → Client | 結算通知 |
+| `ColorGamePlaceBetREQ` | `PlaceBetReq` | Client → Server | 下注請求 |
+| `ColorGamePlaceBetRSP` | `PlaceBetRsp` | Server → Client | 下注回應 |
+| `ColorGameGetStateREQ` | `GetStateReq` | Client → Server | 獲取狀態請求 |
+| `ColorGameGetStateRSP` | `GetStateRsp` | Server → Client | 獲取狀態回應 |
+| `ColorGameRoundStateBRC` | `ColorGameRoundStateBRC` | Server → Clients | 遊戲狀態廣播 |
+| `ColorGameSettlementBRC` | `ColorGameSettlementBRC` | Server → Client | 結算通知 |
 
 ## 添加新 Command 的流程
 
@@ -73,12 +73,12 @@
      COMMAND_TYPE_NEW_FEATURE_RSP = 11;
    }
    
-   message NewFeatureReq {
+   message ColorGameNewFeatureReq {
      int64 user_id = 1;
      string param = 2;
    }
    
-   message NewFeatureRsp {
+   message ColorGameNewFeatureRsp {
      common.ErrorCode error_code = 1;
      string result = 2;
      string error = 3;
@@ -103,8 +103,8 @@
 ### 請求
 ```json
 {
-  "game": "color_game",
-  "command": "PlaceBetREQ",
+  "game_code": "color_game",
+  "command": "ColorGamePlaceBetREQ",
   "data": {
     "color": "red",
     "amount": 100
@@ -116,7 +116,7 @@
 ```json
 {
   "game_code": "color_game",
-  "command": "PlaceBetRSP",
+  "command": "ColorGamePlaceBetRSP",
   "data": {
     "error_code": 0,
     "bet_id": "bet_20251205123456_1001_red",
@@ -129,7 +129,7 @@
 ```json
 {
   "game_code": "color_game",
-  "command": "PlaceBetRSP",
+  "command": "ColorGamePlaceBetRSP",
   "data": {
     "error_code": 5,
     "bet_id": "",
@@ -147,3 +147,5 @@
 5. ✅ **必須**：所有 command 來自 `CommandType` enum
 6. ✅ **必須**：所有 RSP 包含 `error_code` 欄位（int32 數字）
 7. ✅ **必須**：data 結構對應 proto message
+
+

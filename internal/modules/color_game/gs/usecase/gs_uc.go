@@ -47,7 +47,7 @@ func (uc *GSUseCase) PlaceBet(ctx context.Context, userID int64, color domain.Co
 	})
 
 	logger.Info(ctx).
-		Str("color", string(color)).
+		Str("color", color.String()).
 		Int64("amount", amount).
 		Msg("下注请求开始")
 
@@ -66,13 +66,13 @@ func (uc *GSUseCase) PlaceBet(ctx context.Context, userID int64, color domain.Co
 	})
 
 	logger.Debug(ctx).
-		Str("round_state", roundRsp.State).
+		Str("round_state", roundRsp.State.String()).
 		Msg("当前回合信息")
 
 	// 2. Validate color
 	if !isValidColor(color) {
 		logger.Warn(ctx).
-			Str("color", string(color)).
+			Str("color", color.String()).
 			Msg("无效的颜色")
 		return nil, fmt.Errorf("invalid color: %s", color)
 	}
@@ -95,7 +95,7 @@ func (uc *GSUseCase) PlaceBet(ctx context.Context, userID int64, color domain.Co
 	_, err = uc.gmsService.RecordBet(ctx, &pbColorGame.ColorGameRecordBetReq{
 		RoundId: roundRsp.RoundId,
 		UserId:  userID,
-		Color:   string(color),
+		Color:   color,
 		Amount:  amount,
 	})
 	if err != nil {
@@ -143,7 +143,7 @@ func (uc *GSUseCase) PlaceBet(ctx context.Context, userID int64, color domain.Co
 	}
 
 	logger.Info(ctx).
-		Str("color", string(color)).
+		Str("color", color.String()).
 		Int64("total_amount", bet.Amount).
 		Str("bet_id", bet.BetID).
 		Msg("下注成功")
@@ -176,14 +176,14 @@ func (uc *GSUseCase) GetCurrentRound(ctx context.Context, userID int64) (map[str
 	bets := make([]map[string]interface{}, 0, len(playerBets))
 	for _, bet := range playerBets {
 		bets = append(bets, map[string]interface{}{
-			"color":  string(bet.Color),
+			"color":  bet.Color.String(),
 			"amount": bet.Amount,
 		})
 	}
 
 	return map[string]interface{}{
 		"round_id":    roundRsp.RoundId,
-		"state":       roundRsp.State,
+		"state":       roundRsp.State.String(),
 		"betting_end": time.Unix(roundRsp.BettingEndTimestamp, 0),
 		"player_bets": bets,
 	}, nil
@@ -192,7 +192,7 @@ func (uc *GSUseCase) GetCurrentRound(ctx context.Context, userID int64) (map[str
 // SettleRound processes settlement for a round
 func (uc *GSUseCase) SettleRound(ctx context.Context, roundID string, winningColor domain.Color) error {
 	startTime := time.Now()
-	logger.Info(ctx).Str("round_id", roundID).Str("winning_color", string(winningColor)).Msg("Starting settlement")
+	logger.Info(ctx).Str("round_id", roundID).Str("winning_color", winningColor.String()).Msg("Starting settlement")
 
 	// Batch processing configuration
 	const batchSize = 500
@@ -225,7 +225,7 @@ func (uc *GSUseCase) SettleRound(ctx context.Context, roundID string, winningCol
 				UserID:    bet.UserID,
 				RoundID:   roundID,
 				GameCode:  "color_game",
-				BetArea:   string(bet.Color),
+				BetArea:   bet.Color.String(),
 				Amount:    float64(bet.Amount),
 				Payout:    float64(winAmount),
 				Status:    domain.BetOrderStatusSettled,
@@ -275,7 +275,7 @@ func (uc *GSUseCase) SettleRound(ctx context.Context, roundID string, winningCol
 
 	logger.Info(ctx).
 		Str("round_id", roundID).
-		Str("winning_color", string(winningColor)).
+		Str("winning_color", winningColor.String()).
 		Int("total_bets", totalBets).
 		Int("total_processed", totalProcessed).
 		Int("batches", batchNumber).
@@ -293,16 +293,16 @@ func (uc *GSUseCase) SettleRound(ctx context.Context, roundID string, winningCol
 	if uc.gatewayBroadcaster != nil {
 		uc.gatewayBroadcaster.Broadcast("color_game", &pbColorGame.ColorGameSettlementBRC{
 			RoundId:      roundID,
-			WinningColor: string(winningColor),
+			WinningColor: winningColor,
 			BetId:        "",
-			BetColor:     "",
+			BetColor:     pbColorGame.ColorGameReward_REWARD_UNSPECIFIED,
 			BetAmount:    0,
 			WinAmount:    0,
 			IsWinner:     false,
 		})
 		logger.Debug(ctx).
 			Str("round_id", roundID).
-			Str("winning_color", string(winningColor)).
+			Str("winning_color", winningColor.String()).
 			Msg("Broadcasted settlement result to all players")
 	}
 
@@ -365,9 +365,9 @@ func (uc *GSUseCase) processBatch(ctx context.Context, roundID string, winningCo
 		if shouldNotify && uc.gatewayBroadcaster != nil {
 			uc.gatewayBroadcaster.SendToUser(bet.UserID, "color_game", &pbColorGame.ColorGameSettlementBRC{
 				RoundId:      roundID,
-				WinningColor: string(winningColor),
+				WinningColor: winningColor,
 				BetId:        bet.BetID,
-				BetColor:     string(bet.Color),
+				BetColor:     bet.Color,
 				BetAmount:    bet.Amount,
 				WinAmount:    winAmount,
 				IsWinner:     winAmount > 0,
@@ -379,10 +379,10 @@ func (uc *GSUseCase) processBatch(ctx context.Context, roundID string, winningCo
 }
 
 func isValidColor(color domain.Color) bool {
-	return color == domain.ColorRed ||
-		color == domain.ColorGreen ||
-		color == domain.ColorBlue ||
-		color == domain.ColorYellow
+	return color == pbColorGame.ColorGameReward_REWARD_RED ||
+		color == pbColorGame.ColorGameReward_REWARD_GREEN ||
+		color == pbColorGame.ColorGameReward_REWARD_BLUE ||
+		color == pbColorGame.ColorGameReward_REWARD_YELLOW
 }
 
 func calculateWin(bet *domain.Bet, winningColor domain.Color) int64 {

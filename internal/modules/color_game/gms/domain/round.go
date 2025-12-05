@@ -1,32 +1,19 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
+)
 
 // Color represents a game color
-type Color string
-
-const (
-	ColorRed    Color = "red"
-	ColorGreen  Color = "green"
-	ColorBlue   Color = "blue"
-	ColorYellow Color = "yellow"
-)
-
-// GameState represents the current state of the game
-type GameState string
-
-const (
-	StateWaiting GameState = "waiting" // Waiting for next round
-	StateBetting GameState = "betting" // Accepting bets
-	StateDrawing GameState = "drawing" // Drawing result
-	StateResult  GameState = "result"  // Showing results
-)
+type Color = pbColorGame.ColorGameReward
 
 // Round represents a game round
 type Round struct {
 	RoundID    string
-	State      GameState
-	Result     Color
+	State      pbColorGame.ColorGameState
+	Result     pbColorGame.ColorGameReward
 	StartTime  time.Time
 	BettingEnd time.Time
 	TotalBets  int
@@ -37,34 +24,34 @@ type Round struct {
 func NewRound(roundID string) *Round {
 	return &Round{
 		RoundID:   roundID,
-		State:     StateWaiting,
+		State:     pbColorGame.ColorGameState_GAME_STATE_ROUND_STARTED,
 		StartTime: time.Now(),
 	}
 }
 
 // StartBetting transitions to betting state
 func (r *Round) StartBetting(duration time.Duration) {
-	r.State = StateBetting
+	r.State = pbColorGame.ColorGameState_GAME_STATE_BETTING
 	r.BettingEnd = time.Now().Add(duration)
 }
 
 // CanAcceptBet checks if bets can be accepted
 func (r *Round) CanAcceptBet() bool {
-	return r.State == StateBetting && time.Now().Before(r.BettingEnd)
+	return r.State == pbColorGame.ColorGameState_GAME_STATE_BETTING && time.Now().Before(r.BettingEnd)
 }
 
 // Draw transitions to drawing state and selects result
 func (r *Round) Draw(result Color) {
-	r.State = StateDrawing
+	r.State = pbColorGame.ColorGameState_GAME_STATE_DRAWING
 	r.Result = result
 }
 
 // ShowResult transitions to result state
 func (r *Round) ShowResult() {
-	r.State = StateResult
+	r.State = pbColorGame.ColorGameState_GAME_STATE_RESULT
 }
 
 // IsFinished checks if round is finished
 func (r *Round) IsFinished() bool {
-	return r.State == StateResult
+	return r.State == pbColorGame.ColorGameState_GAME_STATE_RESULT
 }

@@ -4,6 +4,236 @@
 
 ### 1. Command 命名規範
 - **所有 command 類型必須在 `colorgame.proto` 的 `CommandType` enum 中定義**
+- 使用 **PascalCase** 命名
+- 命名後綴規範：
+  - `REQ` - 客戶端請求（Client → Server）
+  - `RSP` - 服務端回應（Server → Client）
+  - `BRC` - 服務端廣播（Server → All Clients or Specific User）
+
+### 2. Data 內容規範
+- **所有 `data` 欄位的內容必須對應 proto 中定義的 message**
+- Gateway 負責將 proto message 轉換為 JSON 格式發送給客戶端
+- 客戶端發送的 JSON 會被 Gateway 轉換為對應的 proto message
+
+## 消息格式
+
+### 標準信封格式
+```json
+{
+  "game_code": "color_game",
+  "command": "CommandString",
+  "data": { /* proto message 的 JSON 表示 */ }
+}
+```
+
+## Command 類型定義
+
+### 客戶端 → 服務端（REQ）
+
+#### ColorGamePlaceBetREQ
+**Proto 定義**: `ColorGamePlaceBetReq`
+```protobuf
+message ColorGamePlaceBetReq {
+  int64 user_id = 1;
+  ColorGameReward color = 2;
+  int64 amount = 3;
+}
+```
+
+**JSON 範例**:
+```json
+{
+  "game": "color_game",
+  "command": "ColorGamePlaceBetREQ",
+  "data": {
+    "color": "red",
+    "amount": 100
+  }
+}
+```
+*註：`color` 欄位輸入為字串（如 "red"），服務端會自動映射到 `ColorGameReward` 枚舉。*
+
+#### ColorGameGetStateREQ
+**Proto 定義**: `ColorGameGetStateReq`
+```protobuf
+message ColorGameGetStateReq {
+  int64 user_id = 1;
+}
+```
+
+**JSON 範例**:
+```json
+{
+  "game": "color_game",
+  "command": "ColorGameGetStateREQ",
+  "data": {}
+}
+```
+
+---
+
+### 服務端 → 客戶端（RSP）
+
+#### ColorGamePlaceBetRSP
+**Proto 定義**: `ColorGamePlaceBetRsp`
+```protobuf
+message ColorGamePlaceBetRsp {
+  common.ErrorCode error_code = 1;
+  string bet_id = 2;
+  string error = 3;
+}
+```
+
+**成功回應**:
+```json
+{
+  "game_code": "color_game",
+  "command": "ColorGamePlaceBetRSP",
+  "data": {
+    "error_code": 0,
+    "bet_id": "bet_20251205123456_1001_red",
+    "error": ""
+  }
+}
+```
+
+**失敗回應**:
+```json
+{
+  "game_code": "color_game",
+  "command": "ColorGamePlaceBetRSP",
+  "data": {
+    "error_code": 5,
+    "bet_id": "",
+    "error": "下注時間已結束"
+  }
+}
+```
+
+#### ColorGameGetStateRSP
+**Proto 定義**: `ColorGameGetStateRsp`
+```protobuf
+message ColorGameGetStateRsp {
+  common.ErrorCode error_code = 1;
+  bytes state_json = 2;
+}
+```
+
+**JSON 範例**:
+```json
+{
+  "game_code": "color_game",
+  "command": "ColorGameGetStateRSP",
+  "data": {
+    "round_id": "20251205123456",
+    "state": "GAME_STATE_BETTING",
+    "betting_end_timestamp": 1733377991,
+    "left_time": 10,
+    "player_bets": [
+      {"color": "REWARD_RED", "amount": 100}
+    ]
+  }
+}
+```
+
+---
+
+### 服務端 → 客戶端（BRC - 廣播）
+
+#### ColorGameRoundStateBRC
+**Proto 定義**: `ColorGameRoundStateBRC`
+```protobuf
+message ColorGameRoundStateBRC {
+  string round_id = 1;
+  ColorGameState state = 2;
+  int64 betting_end_timestamp = 3;
+  int64 left_time = 4;
+}
+```
+
+**JSON 範例**:
+```json
+{
+  "game_code": "color_game",
+  "command": "ColorGameRoundStateBRC",
+  "data": {
+    "round_id": "20251205123456",
+    "state": "GAME_STATE_BETTING",
+    "betting_end_timestamp": 1733377991,
+    "left_time": 10
+  }
+}
+```
+
+#### ColorGameSettlementBRC
+**Proto 定義**: `ColorGameSettlementBRC`
+```protobuf
+message ColorGameSettlementBRC {
+  string round_id = 1;
+  ColorGameReward winning_color = 2;
+  string bet_id = 3;
+  ColorGameReward bet_color = 4;
+  int64 bet_amount = 5;
+  int64 win_amount = 6;
+  bool is_winner = 7;
+}
+```
+
+**JSON 範例**:
+```json
+{
+  "game_code": "color_game",
+  "command": "ColorGameSettlementBRC",
+  "data": {
+    "round_id": "20251205123456",
+    "winning_color": "REWARD_RED",
+    "bet_id": "bet_123",
+    "bet_color": "REWARD_RED",
+    "bet_amount": 100,
+    "win_amount": 200,
+    "is_winner": true
+  }
+}
+```
+*註：`winning_color` 和 `bet_color` 返回枚舉的字符串名稱（如 `REWARD_RED`）。*
+
+#### ColorGameBetConfirmation
+**Proto 定義**: `ColorGameBetConfirmation`
+```protobuf
+message ColorGameBetConfirmation {
+  string round_id = 1;
+  string bet_id = 2;
+  int64 user_id = 3;
+  ColorGameReward color = 4;
+  int64 amount = 5;
+}
+```
+*（此消息主要用於服務端廣播下注確認，可配置為單發給用戶或廣播給所有人）*
+
+## 實現規範
+
+### Gateway 職責
+1. **接收客戶端 JSON**：解析 `command` 欄位，根據字串匹配（如 `ColorGamePlaceBetREQ`）路由到對應的處理邏輯
+2. **Command 映射**：Gateway 內部維護 Command String 到業務邏輯的映射。
+
+### 添加新 Command 的步驟
+1. 在 `colorgame.proto` 的 `CommandType` enum 中添加新的 command 類型
+2. 定義對應的 proto message
+3. 運行 `protoc` 重新生成 Go 代碼
+4. 在 Gateway 的 `handleColorGame` 中添加對應的 case 處理
+5. 在 Gateway 的 `convertEvent` 中添加對應的轉換邏輯（如果是廣播消息）
+6. 更新本文檔
+
+## 注意事項
+
+1. **Command 命名**：請使用 `ColorGame` 前綴，保持全局唯一性。
+2. **枚舉處理**：輸入時支持簡化字符串（如 "red"），輸出時通常為枚舉全名（如 "REWARD_RED"）或整數值，視具體實現而定（目前統一為枚舉名稱字符串）。
+
+
+## 設計原則
+
+### 1. Command 命名規範
+- **所有 command 類型必須在 `colorgame.proto` 的 `CommandType` enum 中定義**
 - 使用 **PascalCase** 命名（例如：`PlaceBetREQ`、`ColorGameRoundStateBRC`）
 - 命名後綴規範：
   - `REQ` - 客戶端請求（Client → Server）
@@ -148,7 +378,7 @@ message GetStateRsp {
     "betting_end_timestamp": 1733377991,
     "left_time": 10,
     "player_bets": [
-      {"color": "red", "amount": 100}
+      {"color": "REWARD_RED", "amount": 100}
     ]
   }
 }
@@ -163,7 +393,7 @@ message GetStateRsp {
 ```protobuf
 message ColorGameRoundStateBRC {
   string round_id = 1;
-  string state = 2;
+  ColorGameState state = 2;
   int64 betting_end_timestamp = 3;
   int64 left_time = 4;
 }
@@ -176,23 +406,24 @@ message ColorGameRoundStateBRC {
   "command": "ColorGameRoundStateBRC",
   "data": {
     "round_id": "20251205123456",
-    "state": "EVENT_TYPE_BETTING_STARTED",
+    "state": "GAME_STATE_BETTING",
     "betting_end_timestamp": 1733377991,
     "left_time": 10
   }
 }
 ```
 
-#### result
-**Proto 定義**: `GameEvent`
+#### ColorGameSettlementBRC
+**Proto 定義**: `ColorGameSettlementBRC`
 ```protobuf
-message GameEvent {
-  EventType type = 1;
-  string round_id = 2;
-  string data = 3;
-  int64 timestamp = 4;
-  int64 left_time = 5;
-  int64 betting_end_timestamp = 6;
+message ColorGameSettlementBRC {
+  string round_id = 1;
+  string winning_color = 2;
+  string bet_id = 3;
+  string bet_color = 4;
+  int64 bet_amount = 5;
+  int64 win_amount = 6;
+  bool is_winner = 7;
 }
 ```
 
@@ -200,29 +431,15 @@ message GameEvent {
 ```json
 {
   "game_code": "color_game",
-  "command": "result",
+  "command": "ColorGameSettlementBRC",
   "data": {
     "round_id": "20251205123456",
-    "winning_color": "red",
-    "timestamp": 1733377993,
-    "left_time": 5
-  }
-}
-```
-
-#### settlement
-**Proto 定義**: 自定義 settlement 消息（待補充到 proto）
-
-**JSON 範例**:
-```json
-{
-  "game_code": "color_game",
-  "command": "settlement",
-  "data": {
-    "round_id": "20251205123456",
-    "winning_color": "red",
+    "winning_color": "REWARD_RED",
+    "bet_id": "bet_123",
+    "bet_color": "REWARD_RED",
     "bet_amount": 100,
-    "win_amount": 200
+    "win_amount": 200,
+    "is_winner": true
   }
 }
 ```

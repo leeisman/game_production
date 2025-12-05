@@ -10,7 +10,6 @@ import (
 	"github.com/frankieli/game_product/pkg/logger"
 	pb "github.com/frankieli/game_product/shared/proto/colorgame"
 	pbCommon "github.com/frankieli/game_product/shared/proto/common"
-	"google.golang.org/protobuf/proto"
 )
 
 // Handler is the local adapter handler for GS
@@ -60,24 +59,22 @@ func (h *Handler) GetState(ctx context.Context, req *pb.ColorGameGetStateReq) (*
 	}, nil
 }
 
-// GSBroadcast handles events from GMS (implements service.GSBroadcaster)
-func (h *Handler) GSBroadcast(event proto.Message) {
-	switch gameEvent := event.(type) {
-	case *pb.ColorGameEvent:
-		// Filter events: only process 'result' events to trigger settlement
-		if gameEvent.Type == pb.ColorGameEventType_EVENT_TYPE_RESULT {
-			// Parse result data to get winning color (e.g., "green")
-			color := domain.Color(gameEvent.Data)
+// RoundResult handles events from GMS (implements service.GSBroadcaster and ColorGameGSService)
+func (h *Handler) RoundResult(ctx context.Context, req *pb.ColorGameRoundResultReq) (*pb.ColorGameRoundResultRsp, error) {
+	// Parse result data to get winning color (e.g., "green")
+	color := domain.Color(req.Result)
 
-			// Run settlement asynchronously
-			go func() {
-				ctx := context.Background()
-				if err := h.gsUC.SettleRound(ctx, gameEvent.RoundId, color); err != nil {
-					logger.ErrorGlobal().Err(err).Str("round_id", gameEvent.RoundId).Msg("Settlement failed")
-				}
-			}()
+	// Run settlement asynchronously
+	go func() {
+		// Create a new context for the background task if needed, or use a detached one
+		// For now, we use a new background context to ensure it completes even if request context is cancelled
+		bgCtx := context.Background()
+		if err := h.gsUC.SettleRound(bgCtx, req.RoundId, color); err != nil {
+			logger.ErrorGlobal().Err(err).Str("round_id", req.RoundId).Msg("Settlement failed")
 		}
-	default:
-		// Ignore other event types
-	}
+	}()
+
+	return &pb.ColorGameRoundResultRsp{
+		ErrorCode: pbCommon.ErrorCode_SUCCESS,
+	}, nil
 }

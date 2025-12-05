@@ -5,17 +5,125 @@ Gateway 模組是整個遊戲系統的入口，負責處理 WebSocket 連接、�
 ## 1. 模組結構
 
 ```
-gateway/
-├── gateway.go              # 模組入口 (Facade)
-├── domain/                 # 介面定義
-│   └── gateway.go          # GatewayUseCase, ConnectionManager
-├── usecase/                # 業務邏輯
-│   └── gateway_uc.go       # 轉發邏輯 (Auth, Game)
+internal/modules/gateway/
+├── domain/                    # 介面定義
+│   └── gateway.go
+├── usecase/                   # 業務邏輯
+│   ├── gateway_uc.go          # 核心邏輯 (通用)
+│   └── gateway_color_game_uc.go # 特定遊戲轉發邏輯
 ├── adapter/
-│   └── http/               # HTTP/WebSocket 適配器
-│       └── handler.go      # WebSocket 握手、消息處理
-└── ws/                     # WebSocket 基礎庫
-    └── manager.go          # 連接管理、讀寫泵
+│   ├── http/                  # HTTP/WebSocket 適配器 (Client -> Gateway)
+│   │   └── handler.go         # 握手、消息分發
+│   ├── local/                 # 單體內部調用適配器 (Broadcaster)
+│   │   └── handler.go         # 實現 GatewayService 接口
+│   └── grpc/                  # 微服務 gRPC 客戶端適配器
+└── ws/                        # WebSocket 基礎庫
+    └── manager.go             # 連接管理、讀寫泵
+```
+
+---
+
+## 2. 請求處理流程
+
+### 2.1 啟動與初始化 (`gateway.NewService`)
+- 初始化 `ws.Manager` 用於管理所有活躍連接。
+- 注入 `UserService` (用於驗證) 和 `GameService` (用於轉發)。
+
+### 2.2 WebSocket 握手與連接 (`http.Handler.HandleWebSocket`)
+1.  **Token 驗證**: 從 URL query 或 Header 提取 token，調用 `UserService.ValidateToken`。
+2.  **升級協議**: 驗證通過後，將 HTTP 請求升級為 WebSocket 連接。
+3.  **註冊連接**: 將新連接封裝為 `ws.Connection` 並註冊到 `ws.Manager`。
+
+### 2.3 消息路由與轉發 (`gateway_uc.HandleMessage`)
+1.  **解析信封**: 解析 JSON 消息的 `Header` (`game_code`, `command`)。
+2.  **路由**: 根據 `game_code` 將請求路由到對應的處理函數 (如 `handleColorGame`)。
+3.  **轉換**: 將 JSON payload 轉換為具體的 Proto Request。
+4.  **調用**: 調用後端服務 (如 GMS) 的業務方法。
+5.  **響應**: 將後端返回的 Proto Response 轉換回 JSON，並通過 WebSocket 發送給用戶。
+
+### 2.4 廣播機制 (`ws.Manager.Broadcast`)
+- 提供 `Broadcast(msg []byte)` 和 `SendToUser(userID, msg []byte)` 接口。
+- **Fail-Fast**: 對於廣播消息，如果客戶端 buffer 滿，直接斷開連接以保護系統。
+- **Timeout**: 對於單發消息，提供 5 秒超時機制。
+
+---
+
+## 3. 核心函數設計
+
+### 3.1 `ws.Manager`
+負責底層連接管理，是 Gateway 的核心組件。
+
+*   **Register(conn, userID)**: 
+    *   處理新連接註冊。
+    *   **互斥登入**: 如果該 UserID 已有連接，主動斷開舊連接 (Reason: `replaced_by_new_connection`)。
+*   **Run()**: 
+    *   單執行緒處理所有 `register`/`unregister` 操作，確保 `clients` map 的線程安全，無需對每個操作加鎖。
+*   **Broadcast(msg)**:
+    *   遍歷所有連接發送消息。
+    *   使用 `Non-blocking Send`，如果 `Send` channel 滿了，視為客戶端阻塞，立即調用 `CloseWithReason` 清理。
+
+### 3.2 `ws.Connection`
+代表單個用戶連接，負責讀寫數據。
+
+*   **ReadPump()**:
+    *   從 WebSocket 讀取數據。
+    *   設置 `ReadLimit` (4KB) 防止大包攻擊。
+    *   設置 `PongHandler` 維持心跳。
+    *   讀取到的消息通過回調函數傳遞給 `http.Handler` 處理。
+*   **WritePump()**:
+    *   從 `Send` channel 讀取數據寫入 WebSocket。
+    *   定期發送 `Ping` (每 54s) 保持連接活躍。
+    *   處理寫入超時 (`WriteDeadline`)。
+*   **CloseWithReason(reason, err)**:
+    *   統一的資源釋放入口。
+    *   使用 `sync.Once` 確保冪等性。
+    *   **注意**: 只關閉底層 TCP 連接，不關閉 Go Channel，避免並發寫入導致的 Panic。
+
+### 3.3 `usecase.GatewayUseCase`
+純業務邏輯層，不依賴 HTTP/WebSocket 實現。
+
+*   **HandleMessage(ctx, userID, msg)**:
+    *   定義了標準的消息信封結構 `RequestEnvelope`。
+    *   負責 JSON -> Proto -> JSON 的轉換與路由分發。
+
+---
+
+## 4. 通訊協議設計 (Protocol Envelop)
+
+Gateway 定義了統一的 JSON 信封格式，所有業務消息都必須封裝在此結構中。Gateway 僅解析信封頭部進行路由，不關心具體的業務數據內容。
+
+### 4.1 通用請求格式 (Client -> Server)
+
+```json
+{
+  "game_code": "string",  // [必須] 路由目標 (e.g., "color_game", "wallet")
+  "command": "string",    // [必須] 操作指指令 (e.g., "PlaceBetREQ", "GetBalanceREQ")
+  "data": { ... }         // [可選] 具體業務參數，由目標服務解析
+}
+```
+
+### 4.2 通用響應格式 (Server -> Client)
+
+```json
+{
+  "game_code": "string",  // 來源模組
+  "command": "string",    // 對應的響應指令 (e.g., "PlaceBetRSP")
+  "data": {
+     "error_code": 0,     // 統一錯誤碼 (0=成功)
+     "error": "",         // 錯誤信息
+     ...                  // 業務響應數據
+  }
+}
+```
+
+### 4.3 廣播消息格式 (Server Event)
+
+```json
+{
+  "game_code": "string",
+  "command": "string",    // 事件類型 (e.g., "RoundStateBRC")
+  "data": { ... }         // 事件數據
+}
 ```
 
 ---

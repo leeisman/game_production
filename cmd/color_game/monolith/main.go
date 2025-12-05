@@ -170,7 +170,7 @@ func main() {
 	gsHandler := colorgameGSLocal.NewHandler(gsUseCase)
 
 	// Set GS Handler as broadcaster (it implements both ColorGameService and GSBroadcaster)
-	gmsUC.SetGSBroadcaster(gsHandler)
+	gmsUC.SetGSService(gsHandler)
 
 	logger.InfoGlobal().Msg("  ✅ GS initialized")
 

@@ -17,7 +17,7 @@ import (
 
 // Handler implements the gRPC server for GS
 type Handler struct {
-	pb.UnimplementedColorGameServiceServer
+	pb.UnimplementedColorGameGSServiceServer
 	gsUC *usecase.GSUseCase
 }
 
@@ -66,6 +66,32 @@ func (h *Handler) GetState(ctx context.Context, req *pb.ColorGameGetStateReq) (*
 	}, nil
 }
 
+// RoundResult implements the RoundResult RPC
+func (h *Handler) RoundResult(ctx context.Context, req *pb.ColorGameRoundResultReq) (*pb.ColorGameRoundResultRsp, error) {
+	// For gRPC, we just forward to the use case logic directly or via a service method
+	// Since GSUseCase doesn't have a direct RoundResult method that takes proto, we might need to adapt here
+	// But wait, the local handler implements it by calling SettleRound asynchronously.
+	// We should probably do similar logic here or delegate to a common service implementation.
+	// However, the gRPC handler is an adapter for incoming requests.
+	// The RoundResult is a notification from GMS.
+
+	// Parse result data
+	color := domain.Color(req.Result)
+
+	// Run settlement asynchronously
+	// Note: In a real gRPC handler, we might want to return immediately.
+	go func() {
+		bgCtx := context.Background()
+		if err := h.gsUC.SettleRound(bgCtx, req.RoundId, color); err != nil {
+			logger.ErrorGlobal().Err(err).Str("round_id", req.RoundId).Msg("Settlement failed")
+		}
+	}()
+
+	return &pb.ColorGameRoundResultRsp{
+		ErrorCode: pbCommon.ErrorCode_SUCCESS,
+	}, nil
+}
+
 // StartServer starts the gRPC server
 func StartServer(address string, gsUC *usecase.GSUseCase) {
 	lis, err := net.Listen("tcp", address)
@@ -73,7 +99,7 @@ func StartServer(address string, gsUC *usecase.GSUseCase) {
 		logger.FatalGlobal().Err(err).Msg("failed to listen")
 	}
 	s := grpc.NewServer()
-	pb.RegisterColorGameServiceServer(s, NewHandler(gsUC))
+	pb.RegisterColorGameGSServiceServer(s, NewHandler(gsUC))
 
 	// Enable reflection for debugging
 	reflection.Register(s)

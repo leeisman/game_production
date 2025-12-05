@@ -9,6 +9,7 @@ import (
 	gmsDomain "github.com/frankieli/game_product/internal/modules/color_game/gms/domain"
 	gsDomain "github.com/frankieli/game_product/internal/modules/color_game/gs/domain"
 	"github.com/frankieli/game_product/pkg/logger"
+	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
 )
 
 func init() {
@@ -30,8 +31,17 @@ func (m *TestBroadcaster) Broadcast(gameCode string, message proto.Message) {
 	m.Messages <- message
 }
 
-func (m *TestBroadcaster) GSBroadcast(message proto.Message) {
-	m.Messages <- message
+func (m *TestBroadcaster) RoundResult(ctx context.Context, req *pbColorGame.ColorGameRoundResultReq) (*pbColorGame.ColorGameRoundResultRsp, error) {
+	m.Messages <- req
+	return &pbColorGame.ColorGameRoundResultRsp{}, nil
+}
+
+func (m *TestBroadcaster) PlaceBet(ctx context.Context, req *pbColorGame.ColorGamePlaceBetReq) (*pbColorGame.ColorGamePlaceBetRsp, error) {
+	return &pbColorGame.ColorGamePlaceBetRsp{}, nil
+}
+
+func (m *TestBroadcaster) GetState(ctx context.Context, req *pbColorGame.ColorGameGetStateReq) (*pbColorGame.ColorGameGetStateRsp, error) {
+	return &pbColorGame.ColorGameGetStateRsp{}, nil
 }
 
 func (m *TestBroadcaster) SendToUser(userID int64, gameCode string, message proto.Message) {

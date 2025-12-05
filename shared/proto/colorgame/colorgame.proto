@@ -6,19 +6,31 @@ option go_package = "github.com/frankieli/game_product/shared/proto/colorgame";
 
 import "shared/proto/common/common.proto";
 
-// ColorGameService defines the interface for GS operations
-service ColorGameService {
+// ColorGameGSService defines the interface for GS operations
+service ColorGameGSService {
   // PlaceBet handles placing a bet
   rpc PlaceBet(ColorGamePlaceBetReq) returns (ColorGamePlaceBetRsp);
 
   // GetState returns the current game state
   rpc GetState(ColorGameGetStateReq) returns (ColorGameGetStateRsp);
+
+  // RoundResult handles round result notification from GMS
+  rpc RoundResult(ColorGameRoundResultReq) returns (ColorGameRoundResultRsp);
+}
+
+// ColorGameGMSService defines the interface for GMS operations
+service ColorGameGMSService {
+  // RecordBet records a bet in GMS
+  rpc RecordBet(ColorGameRecordBetReq) returns (ColorGameRecordBetRsp);
+
+  // GetCurrentRound gets the current round from GMS
+  rpc GetCurrentRound(ColorGameGetCurrentRoundReq) returns (ColorGameGetCurrentRoundRsp);
 }
 
 
 message ColorGamePlaceBetReq {
   int64 user_id = 1;
-  string color = 2;
+  ColorGameReward color = 2;
   int64 amount = 3;
 }
 
@@ -40,7 +52,7 @@ message ColorGameGetStateRsp {
 message ColorGameRecordBetReq {
   string round_id = 1;
   int64 user_id = 2;
-  string color = 3;
+  ColorGameReward color = 3;
   int64 amount = 4;
 }
 
@@ -54,92 +66,66 @@ message ColorGameGetCurrentRoundReq {
 }
 
 message ColorGamePlayerBet {
-  string color = 1;
+  ColorGameReward color = 1;
   int64 amount = 2;
 }
 
 message ColorGameGetCurrentRoundRsp {
   common.ErrorCode error_code = 1;
   string round_id = 2;
-  string state = 3;
+  ColorGameState state = 3;
   int64 betting_end_timestamp = 4;
   repeated ColorGamePlayerBet player_bets = 5;
   int64 left_time = 6;
 }
 
-message ColorGameSubscribeEventsReq {}
 
-message ColorGameEvent {
-  ColorGameEventType type = 1;
-  string round_id = 2;
-  string data = 3; // JSON string containing event-specific data
-  int64 timestamp = 4;
-  int64 left_time = 5;
-  int64 betting_end_timestamp = 6;
+
+enum ColorGameState {
+  GAME_STATE_UNSPECIFIED = 0;
+  GAME_STATE_ROUND_STARTED = 1;
+  GAME_STATE_BETTING = 2;
+  GAME_STATE_DRAWING = 3;
+  GAME_STATE_RESULT = 4;
+  GAME_STATE_ROUND_ENDED = 5;
+  GAME_STATE_STOPPED = 6;
 }
 
-enum ColorGameEventType {
-  EVENT_TYPE_UNSPECIFIED = 0;
-  EVENT_TYPE_ROUND_STARTED = 1;
-  EVENT_TYPE_BETTING_STARTED = 2;
-  EVENT_TYPE_DRAWING = 3;
-  EVENT_TYPE_RESULT = 4;
-  EVENT_TYPE_ROUND_ENDED = 5;
-  EVENT_TYPE_SETTLEMENT = 6;
-  EVENT_TYPE_SETTLEMENT_COMPLETE = 7;
-  EVENT_TYPE_BET_PLACED = 8;
-  EVENT_TYPE_BET_ERROR = 9;
-  EVENT_TYPE_GAME_STATE = 10;
-  EVENT_TYPE_STATE_ERROR = 11;
-  EVENT_TYPE_MACHINE_STOPPED = 12;
+enum ColorGameReward {
+  REWARD_UNSPECIFIED = 0;
+  REWARD_RED = 1;
+  REWARD_GREEN = 2;
+  REWARD_BLUE = 3;
+  REWARD_YELLOW = 4;
 }
 
 message ColorGameRoundStateBRC {
   string round_id = 1;
-  string state = 2;
+  ColorGameState state = 2;
   int64 betting_end_timestamp = 3;
   int64 left_time = 4;
-}
-
-// ColorGameBetConfirmation is sent to user after a bet is placed
-message ColorGameBetConfirmation {
-  string round_id = 1;
-  string bet_id = 2;
-  int64 user_id = 3;
-  string color = 4;
-  int64 amount = 5;
-  bool is_update = 6; // true if this was an accumulation of existing bet
 }
 
 // ColorGameSettlementBRC is sent to users after round settlement
 // 有下注和無下注的玩家收到的欄位不同
 message ColorGameSettlementBRC {
   string round_id = 1;
-  string winning_color = 2;
+  ColorGameReward winning_color = 2;
   
   // 以下欄位只有下注的玩家才有值
   string bet_id = 3;           // 下注 ID（無下注時為空）
-  string bet_color = 4;        // 下注顏色（無下注時為空）
+  ColorGameReward bet_color = 4;        // 下注顏色（無下注時為空）
   int64 bet_amount = 5;        // 下注金額（無下注時為 0）
   int64 win_amount = 6;        // 贏得金額（無下注或輸了時為 0）
   bool is_winner = 7;          // 是否贏家（無下注時為 false）
 }
 
-// CommandType defines all WebSocket command types
-// All commands follow PascalCase naming convention
-enum CommandType {
-  COMMAND_TYPE_UNSPECIFIED = 0;
-  
-  // Client -> Server (REQ)
-  COMMAND_TYPE_PLACE_BET_REQ = 1;
-  COMMAND_TYPE_GET_STATE_REQ = 2;
-  
-  // Server -> Client (RSP)
-  COMMAND_TYPE_PLACE_BET_RSP = 3;
-  COMMAND_TYPE_GET_STATE_RSP = 4;
-  
-  // Server -> Client (BRC - Broadcast)
-  COMMAND_TYPE_COLOR_GAME_ROUND_STATE_BRC = 5;
-  COMMAND_TYPE_RESULT_BRC = 6;
-  COMMAND_TYPE_SETTLEMENT_BRC = 7;
+message ColorGameRoundResultReq {
+  string round_id = 1;
+  ColorGameReward result = 2;
+}
+
+message ColorGameRoundResultRsp {
+  common.ErrorCode error_code = 1;
+  string error = 2;
 }

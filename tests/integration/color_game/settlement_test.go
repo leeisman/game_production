@@ -9,12 +9,11 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	gmsLocal "github.com/frankieli/game_product/internal/modules/color_game/gms/adapter/local"
-	gmsDomain "github.com/frankieli/game_product/internal/modules/color_game/gms/domain"
 	gmsMachine "github.com/frankieli/game_product/internal/modules/color_game/gms/machine"
 	gmsUC "github.com/frankieli/game_product/internal/modules/color_game/gms/usecase"
 	gsLocal "github.com/frankieli/game_product/internal/modules/color_game/gs/adapter/local"
-
 	gsDomain "github.com/frankieli/game_product/internal/modules/color_game/gs/domain"
+
 	gsRepo "github.com/frankieli/game_product/internal/modules/color_game/gs/repository/memory"
 	gsUC "github.com/frankieli/game_product/internal/modules/color_game/gs/usecase"
 
@@ -49,13 +48,20 @@ func TestSettlement(t *testing.T) {
 	playerUC := gsUC.NewGSUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, broadcaster)
 
 	gsHandler := gsLocal.NewHandler(playerUC)
-	roundUC.SetGSBroadcaster(gsHandler)
+	roundUC.SetGSService(gsHandler)
 
 	// 3. Wait for betting state
 	var currentRoundID string
 	for i := 0; i < 20; i++ {
 		round, err := playerUC.GetCurrentRound(ctx, 1001)
-		if err == nil && round["state"] == string(gmsDomain.StateBetting) {
+		if err != nil {
+			t.Logf("GetCurrentRound error: %v", err)
+		} else {
+			state := round["state"].(string)
+			targetState := pbColorGame.ColorGameState_GAME_STATE_BETTING.String()
+			t.Logf("Current state: %s, Target: %s, Match: %v, RoundID: %v", state, targetState, state == targetState, round["round_id"])
+		}
+		if err == nil && round["state"] == pbColorGame.ColorGameState_GAME_STATE_BETTING.String() {
 			currentRoundID = round["round_id"].(string)
 			break
 		}
@@ -74,10 +80,10 @@ func TestSettlement(t *testing.T) {
 		color  gsDomain.Color
 		amount int64
 	}{
-		{1001, gsDomain.ColorRed, 100},
-		{1002, gsDomain.ColorGreen, 200},
-		{1003, gsDomain.ColorRed, 150},
-		{1004, gsDomain.ColorBlue, 50},
+		{1001, pbColorGame.ColorGameReward_REWARD_RED, 100},
+		{1002, pbColorGame.ColorGameReward_REWARD_GREEN, 200},
+		{1003, pbColorGame.ColorGameReward_REWARD_RED, 150},
+		{1004, pbColorGame.ColorGameReward_REWARD_BLUE, 50},
 	}
 
 	// Set initial balance and place bets
@@ -90,7 +96,7 @@ func TestSettlement(t *testing.T) {
 	}
 
 	// 5. Trigger settlement with Red as winning color
-	winningColor := gsDomain.ColorRed
+	winningColor := pbColorGame.ColorGameReward_REWARD_RED
 	err := playerUC.SettleRound(ctx, currentRoundID, winningColor)
 	if err != nil {
 		t.Fatalf("SettleRound failed: %v", err)

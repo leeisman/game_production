@@ -29,7 +29,7 @@ func (h *Handler) convertEvent(gameCode string, event proto.Message) []byte {
 	case *pbColorGame.ColorGameRoundStateBRC:
 		finalData := map[string]interface{}{
 			"round_id":              e.RoundId,
-			"state":                 e.State,
+			"state":                 e.State.String(),
 			"betting_end_timestamp": e.BettingEndTimestamp,
 			"left_time":             e.LeftTime,
 		}
@@ -46,9 +46,9 @@ func (h *Handler) convertEvent(gameCode string, event proto.Message) []byte {
 	case *pbColorGame.ColorGameSettlementBRC:
 		finalData := map[string]interface{}{
 			"round_id":      e.RoundId,
-			"winning_color": e.WinningColor,
+			"winning_color": e.WinningColor.String(),
 			"bet_id":        e.BetId,
-			"bet_color":     e.BetColor,
+			"bet_color":     e.BetColor.String(),
 			"bet_amount":    e.BetAmount,
 			"win_amount":    e.WinAmount,
 			"is_winner":     e.IsWinner,

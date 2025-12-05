@@ -49,7 +49,7 @@ func (r *BetRepository) SaveBet(ctx context.Context, bet *domain.Bet) error {
 
 	// 3. Update user index (Hash: color -> bet_id)
 	indexKey := fmt.Sprintf("user_index:%s:%d", bet.RoundID, bet.UserID)
-	pipe.HSet(ctx, indexKey, string(bet.Color), bet.BetID)
+	pipe.HSet(ctx, indexKey, bet.Color.String(), bet.BetID)
 	pipe.Expire(ctx, indexKey, r.ttl)
 
 	_, err = pipe.Exec(ctx)
@@ -117,7 +117,7 @@ func (r *BetRepository) GetUserBets(ctx context.Context, roundID string, userID 
 func (r *BetRepository) GetUserBet(ctx context.Context, roundID string, userID int64, color domain.Color) (*domain.Bet, error) {
 	// 1. Get bet ID from user index
 	indexKey := fmt.Sprintf("user_index:%s:%d", roundID, userID)
-	betID, err := r.rdb.HGet(ctx, indexKey, string(color)).Result()
+	betID, err := r.rdb.HGet(ctx, indexKey, color.String()).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return nil, nil // Not found

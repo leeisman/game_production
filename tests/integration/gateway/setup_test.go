@@ -9,6 +9,7 @@ import (
 	gmsDomain "github.com/frankieli/game_product/internal/modules/color_game/gms/domain"
 	gsDomain "github.com/frankieli/game_product/internal/modules/color_game/gs/domain"
 	"github.com/frankieli/game_product/pkg/logger"
+	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
 )
 
 func init() {
@@ -19,7 +20,17 @@ type MockBroadcaster struct{}
 
 func (m *MockBroadcaster) Broadcast(gameCode string, message proto.Message)                {}
 func (m *MockBroadcaster) SendToUser(userID int64, gameCode string, message proto.Message) {}
-func (m *MockBroadcaster) GSBroadcast(message proto.Message)                               {}
+func (m *MockBroadcaster) RoundResult(ctx context.Context, req *pbColorGame.ColorGameRoundResultReq) (*pbColorGame.ColorGameRoundResultRsp, error) {
+	return &pbColorGame.ColorGameRoundResultRsp{}, nil
+}
+
+func (m *MockBroadcaster) PlaceBet(ctx context.Context, req *pbColorGame.ColorGamePlaceBetReq) (*pbColorGame.ColorGamePlaceBetRsp, error) {
+	return &pbColorGame.ColorGamePlaceBetRsp{}, nil
+}
+
+func (m *MockBroadcaster) GetState(ctx context.Context, req *pbColorGame.ColorGameGetStateReq) (*pbColorGame.ColorGameGetStateRsp, error) {
+	return &pbColorGame.ColorGameGetStateRsp{}, nil
+}
 
 // MockGameRoundRepository for testing
 type MockGameRoundRepository struct {

@@ -5,17 +5,11 @@ import (
 	"time"
 
 	"github.com/bwmarrin/snowflake"
+	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
 )
 
 // Color represents a game color (same as GMS)
-type Color string
-
-const (
-	ColorRed    Color = "red"
-	ColorGreen  Color = "green"
-	ColorBlue   Color = "blue"
-	ColorYellow Color = "yellow"
-)
+type Color = pbColorGame.ColorGameReward
 
 // Bet represents a player's bet
 type Bet struct {

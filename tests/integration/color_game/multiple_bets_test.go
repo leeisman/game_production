@@ -6,13 +6,12 @@ import (
 	"time"
 
 	gmsLocal "github.com/frankieli/game_product/internal/modules/color_game/gms/adapter/local"
-	gmsDomain "github.com/frankieli/game_product/internal/modules/color_game/gms/domain"
 	gmsMachine "github.com/frankieli/game_product/internal/modules/color_game/gms/machine"
 	gmsUC "github.com/frankieli/game_product/internal/modules/color_game/gms/usecase"
 	gsLocal "github.com/frankieli/game_product/internal/modules/color_game/gs/adapter/local"
+	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
 	"google.golang.org/protobuf/proto"
 
-	gsDomain "github.com/frankieli/game_product/internal/modules/color_game/gs/domain"
 	gsRepo "github.com/frankieli/game_product/internal/modules/color_game/gs/repository/memory"
 	gsUC "github.com/frankieli/game_product/internal/modules/color_game/gs/usecase"
 
@@ -45,13 +44,13 @@ func TestMultipleBetsPerUser(t *testing.T) {
 	playerUC := gsUC.NewGSUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, broadcaster)
 
 	gsHandler := gsLocal.NewHandler(playerUC)
-	gmsUseCase.SetGSBroadcaster(gsHandler)
+	gmsUseCase.SetGSService(gsHandler)
 
 	// 2. Wait for betting state
 	var currentRoundID string
 	for i := 0; i < 20; i++ {
 		round, err := playerUC.GetCurrentRound(ctx, 1001)
-		if err == nil && round["state"] == string(gmsDomain.StateBetting) {
+		if err == nil && round["state"] == pbColorGame.ColorGameState_GAME_STATE_BETTING.String() {
 			currentRoundID = round["round_id"].(string)
 			break
 		}
@@ -62,24 +61,26 @@ func TestMultipleBetsPerUser(t *testing.T) {
 		t.Fatal("Failed to wait for Betting state")
 	}
 
-	// 3. Test: Same user places multiple bets
+	// 3. Test: User places multiple bets
 	userID := int64(1001)
 	walletSvc.SetBalance(userID, 1000)
 
-	bets := []struct {
-		color  gsDomain.Color
-		amount int64
-	}{
-		{gsDomain.ColorRed, 100},
-		{gsDomain.ColorGreen, 50},
-		{gsDomain.ColorRed, 150},
+	// Bet 1: Red 100
+	_, err := playerUC.PlaceBet(ctx, userID, pbColorGame.ColorGameReward_REWARD_RED, 100)
+	if err != nil {
+		t.Fatalf("First bet failed: %v", err)
 	}
 
-	for _, bet := range bets {
-		_, err := playerUC.PlaceBet(ctx, userID, bet.color, bet.amount)
-		if err != nil {
-			t.Fatalf("PlaceBet failed: %v", err)
-		}
+	// Bet 2: Red 50 (Add to existing)
+	_, err = playerUC.PlaceBet(ctx, userID, pbColorGame.ColorGameReward_REWARD_RED, 50)
+	if err != nil {
+		t.Fatalf("Second bet failed: %v", err)
+	}
+
+	// Bet 3: Green 200 (New bet on different color)
+	_, err = playerUC.PlaceBet(ctx, userID, pbColorGame.ColorGameReward_REWARD_GREEN, 200)
+	if err != nil {
+		t.Fatalf("Third bet failed: %v", err)
 	}
 
 	// 4. Verify all bets are stored
@@ -104,9 +105,12 @@ func TestMultipleBetsPerUser(t *testing.T) {
 	if len(playerBets) != 2 {
 		t.Errorf("Expected 2 bets in response, got %d", len(playerBets))
 	}
+	if playerBets[0]["color"] != pbColorGame.ColorGameReward_REWARD_RED.String() {
+		t.Errorf("Expected first bet color Red, got %v", playerBets[0]["color"])
+	}
 
 	// 6. Verify wallet deduction
-	expectedBalance := int64(1000 - 100 - 50 - 150)
+	expectedBalance := int64(1000 - 100 - 50 - 200)
 	balance, err := walletSvc.GetBalance(ctx, userID)
 	if err != nil {
 		t.Fatalf("GetBalance failed: %v", err)
@@ -116,7 +120,7 @@ func TestMultipleBetsPerUser(t *testing.T) {
 	}
 
 	// 7. Settle with Red as winning color
-	winningColor := gsDomain.ColorRed
+	winningColor := pbColorGame.ColorGameReward_REWARD_RED
 	err = playerUC.SettleRound(ctx, currentRoundID, winningColor)
 	if err != nil {
 		t.Fatalf("SettleRound failed: %v", err)
@@ -124,8 +128,8 @@ func TestMultipleBetsPerUser(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	// 8. Verify payout (Red bets: 100 + 150 = 250, payout = 500)
-	expectedFinalBalance := expectedBalance + 200 + 300 // 2x for each Red bet
+	// 8. Verify payout (Red bets: 100 + 50 = 150, payout = 300)
+	expectedFinalBalance := expectedBalance + 300 // 2x for Red bets
 	finalBalance, err := walletSvc.GetBalance(ctx, userID)
 	if err != nil {
 		t.Fatalf("GetBalance failed: %v", err)

@@ -13,7 +13,7 @@ import (
 
 // GameEvent represents a game event
 type GameEvent struct {
-	Type                pbColorGame.ColorGameEventType
+	Type                pbColorGame.ColorGameState
 	RoundID             string
 	Data                interface{}
 	LeftTime            int64
@@ -26,7 +26,7 @@ type EventHandler func(event GameEvent)
 // RoundView is a read-only snapshot of current round
 type RoundView struct {
 	RoundID    string
-	State      domain.GameState
+	State      pbColorGame.ColorGameState
 	Result     domain.Color
 	StartTime  time.Time
 	BettingEnd time.Time
@@ -104,7 +104,7 @@ func (sm *StateMachine) Start(ctx context.Context) {
 		if stopping {
 			logger.Info(ctx).Msg("🛑 [GMS] State Machine Stopping (Graceful)")
 			sm.emitEvent(GameEvent{
-				Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_MACHINE_STOPPED,
+				Type:                pbColorGame.ColorGameState_GAME_STATE_STOPPED,
 				RoundID:             "",
 				LeftTime:            0,
 				BettingEndTimestamp: 0,
@@ -131,7 +131,7 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 		Msg("🔄 [GMS] 回合開始 (Round Started)")
 
 	sm.emitEvent(GameEvent{
-		Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_ROUND_STARTED,
+		Type:                pbColorGame.ColorGameState_GAME_STATE_ROUND_STARTED,
 		RoundID:             roundID,
 		LeftTime:            int64(sm.WaitDuration.Seconds()), // Wait time before betting starts
 		BettingEndTimestamp: 0,
@@ -156,7 +156,7 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 		Msg("🟢 [GMS] 開始下注 (Betting Started)")
 
 	sm.emitEvent(GameEvent{
-		Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_BETTING_STARTED,
+		Type:                pbColorGame.ColorGameState_GAME_STATE_BETTING,
 		RoundID:             roundID,
 		Data:                bettingEnd,
 		LeftTime:            int64(sm.BettingDuration.Seconds()),
@@ -177,12 +177,12 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 
 	logger.Info(ctx).
 		Str("round_id", roundID).
-		Str("result_color", string(result)).
+		Str("result_color", result.String()).
 		Dur("duration", sm.DrawingDuration).
 		Msg("🎲 [GMS] 停止下注，正在開獎 (Drawing)")
 
 	sm.emitEvent(GameEvent{
-		Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_DRAWING,
+		Type:                pbColorGame.ColorGameState_GAME_STATE_DRAWING,
 		RoundID:             roundID,
 		Data:                result,
 		LeftTime:            int64(sm.DrawingDuration.Seconds()),
@@ -201,12 +201,12 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 
 	logger.Info(ctx).
 		Str("round_id", roundID).
-		Str("final_result", string(result)).
+		Str("final_result", result.String()).
 		Dur("duration", sm.ResultDuration).
 		Msg("📊 [GMS] 公布結果 (Show Result)")
 
 	sm.emitEvent(GameEvent{
-		Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_RESULT,
+		Type:                pbColorGame.ColorGameState_GAME_STATE_RESULT,
 		RoundID:             roundID,
 		Data:                result,
 		LeftTime:            int64(sm.ResultDuration.Seconds()),
@@ -223,7 +223,7 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 		Msg("🏁 [GMS] 回合結束 (Round Ended)")
 
 	sm.emitEvent(GameEvent{
-		Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_ROUND_ENDED,
+		Type:                pbColorGame.ColorGameState_GAME_STATE_ROUND_ENDED,
 		RoundID:             roundID,
 		Data:                nil,
 		LeftTime:            int64(sm.RestDuration.Seconds()),
@@ -237,12 +237,13 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 	time.Sleep(sm.RestDuration)
 }
 
+// drawResult simulates drawing a result
 func (sm *StateMachine) drawResult() domain.Color {
 	colors := []domain.Color{
-		domain.ColorRed,
-		domain.ColorGreen,
-		domain.ColorBlue,
-		domain.ColorYellow,
+		pbColorGame.ColorGameReward_REWARD_RED,
+		pbColorGame.ColorGameReward_REWARD_GREEN,
+		pbColorGame.ColorGameReward_REWARD_BLUE,
+		pbColorGame.ColorGameReward_REWARD_YELLOW,
 	}
 	return colors[sm.rnd.Intn(len(colors))]
 }

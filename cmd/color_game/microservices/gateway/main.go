@@ -151,27 +151,21 @@ func subscribeToGMSEvents(rdb *redis.Client, broadcaster *gatewayAdapter.Handler
 
 	ch := pubsub.Channel()
 	for msg := range ch {
-		// Try to unmarshal as GameEvent first
-		var event pb.ColorGameEvent
-		err := proto.Unmarshal([]byte(msg.Payload), &event)
-
-		// If successful and Type is set, it's a GameEvent
-		if err == nil && event.Type != pb.ColorGameEventType_EVENT_TYPE_UNSPECIFIED {
-			broadcaster.Broadcast("color_game", &event)
-			// To GS (for Settlement)
-			gsHandler.GSBroadcast(&event)
-			logger.InfoGlobal().Str("type", event.Type.String()).Msg("Broadcasting GMS event (GameEvent)")
-			continue
-		}
-
-		// If failed or Type is unspecified, try ColorGameRoundStateBRC
+		// Try ColorGameRoundStateBRC
 		var brc pb.ColorGameRoundStateBRC
 		if err := proto.Unmarshal([]byte(msg.Payload), &brc); err == nil {
 			broadcaster.Broadcast("color_game", &brc)
-			// GS might not need BRC if it only cares about Result/Settlement which are GameEvents
-			// But let's send it anyway if GS Broadcaster handles it (it expects proto.Message)
-			gsHandler.GSBroadcast(&brc)
-			logger.InfoGlobal().Str("state", brc.State).Msg("Broadcasting GMS event (BRC)")
+			logger.InfoGlobal().Str("state", brc.State.String()).Msg("Broadcasting GMS event (BRC)")
+			continue
+		}
+
+		// Try ColorGameRoundResultReq
+		var req pb.ColorGameRoundResultReq
+		if err := proto.Unmarshal([]byte(msg.Payload), &req); err == nil {
+			// To GS (for Settlement)
+			ctx := context.Background()
+			_, _ = gsHandler.RoundResult(ctx, &req)
+			logger.InfoGlobal().Str("round_id", req.RoundId).Msg("Forwarding RoundResult to GS")
 			continue
 		}
 

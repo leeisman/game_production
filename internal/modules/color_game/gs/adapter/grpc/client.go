@@ -9,15 +9,15 @@ import (
 	"google.golang.org/grpc"
 )
 
-// ClientAdapter adapts gRPC client to colorgame.ColorGameService interface
+// ClientAdapter adapts gRPC client to colorgame.ColorGameGSService interface
 type ClientAdapter struct {
-	client pb.ColorGameServiceClient
+	client pb.ColorGameGSServiceClient
 }
 
 // NewColorGameClient creates a new color game service client adapter
-func NewColorGameClient(conn *grpc.ClientConn) colorgame.ColorGameService {
+func NewColorGameClient(conn *grpc.ClientConn) colorgame.ColorGameGSService {
 	return &ClientAdapter{
-		client: pb.NewColorGameServiceClient(conn),
+		client: pb.NewColorGameGSServiceClient(conn),
 	}
 }
 
@@ -29,4 +29,9 @@ func (c *ClientAdapter) PlaceBet(ctx context.Context, req *pb.ColorGamePlaceBetR
 // GetState returns the current game state via gRPC
 func (c *ClientAdapter) GetState(ctx context.Context, req *pb.ColorGameGetStateReq) (*pb.ColorGameGetStateRsp, error) {
 	return c.client.GetState(ctx, req)
+}
+
+// RoundResult handles round result notification via gRPC
+func (c *ClientAdapter) RoundResult(ctx context.Context, req *pb.ColorGameRoundResultReq) (*pb.ColorGameRoundResultRsp, error) {
+	return c.client.RoundResult(ctx, req)
 }
