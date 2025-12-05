@@ -22,27 +22,30 @@ import (
 func TestMultipleBetsPerUser(t *testing.T) {
 	// 1. Setup
 	stateMachine := gmsMachine.NewStateMachine()
+	stateMachine.WaitDuration = 50 * time.Millisecond
 	stateMachine.BettingDuration = 500 * time.Millisecond
 	stateMachine.DrawingDuration = 100 * time.Millisecond
 	stateMachine.ResultDuration = 100 * time.Millisecond
+	stateMachine.RestDuration = 50 * time.Millisecond
 
 	broadcaster := &TestBroadcaster{Messages: make(chan proto.Message, 100)}
 	gameRoundRepo := &MockGameRoundRepository{}
-	roundUC := gmsUC.NewRoundUseCase(stateMachine, broadcaster, broadcaster, gameRoundRepo)
+	gmsUseCase := gmsUC.NewGMSUseCase(stateMachine, broadcaster, nil, gameRoundRepo)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go stateMachine.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	gmsHandler := gmsLocal.NewHandler(roundUC)
+	gmsHandler := gmsLocal.NewHandler(gmsUseCase)
 	betRepo := gsRepo.NewBetRepository()
 	betOrderRepo := &MockBetOrderRepository{}
 	walletSvc := wallet.NewMockService()
 
-	playerUC := gsUC.NewPlayerUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, broadcaster)
+	playerUC := gsUC.NewGSUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, broadcaster)
 
-	_ = gsLocal.NewGSBroadcaster(playerUC)
+	gsHandler := gsLocal.NewHandler(playerUC)
+	gmsUseCase.SetGSBroadcaster(gsHandler)
 
 	// 2. Wait for betting state
 	var currentRoundID string

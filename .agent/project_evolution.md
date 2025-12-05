@@ -34,6 +34,16 @@
     *   **Smart Buffered I/O**: 引入記憶體緩衝寫入，解決 Console I/O 阻塞問題。
     *   **Reliability**: 實作 Panic Flush 和 Graceful Shutdown Flush。
 
+### Phase 5: State Machine Broadcast Standardization (狀態機廣播標準化)
+*   **目標**: 標準化狀態機廣播並確保時間同步。
+*   **變更**:
+    *   **ColorGameStateBRC**: 引入 `ColorGameRoundStateBRC` 消息，包含 `left_time` 和 `betting_end_timestamp`。
+    *   **Redis Pub/Sub (Microservices)**: 在微服務模式下，GMS 通過 Redis Pub/Sub 廣播狀態變更。
+    *   **Function Callback (Monolith)**: 在單體模式下 (`cmd/color_game/monolith`)，GMS 通過函數回調 (`SetGSBroadcaster`) 直接通知 Gateway 和 GS，**不使用 Redis 廣播**。
+    *   **關鍵決策**: 
+        *   單體與微服務的廣播機制分離。
+        *   狀態機事件中包含 `BettingEndTimestamp` 以支持動態剩餘時間計算。
+
 ---
 
 ## 2. 設計哲學 (Design Philosophy)
@@ -52,6 +62,9 @@
     *   當 Module A 需要調用 Module B 時，應依賴 `pkg/service/module_b` 中定義的介面。
     *   `internal/modules` 是私有的，不應被其他模組直接 import。
     *   這確保了模組間的鬆耦合，並允許輕鬆替換實作 (e.g., Mocking for Test)。
+*   **Broadcast Mechanism**:
+    *   **Monolith**: 使用 In-Process Function Call (Callback/Interface)。
+    *   **Microservices**: 使用 Redis Pub/Sub 或 gRPC Stream (目前微服務模式尚未完全實作，Redis 廣播僅為預留/測試)。
 
 ### 2.3 Performance
 *   **Zero Allocation**: 在熱點路徑 (Hot Path) 盡量避免記憶體分配 (e.g., 使用 `zerolog`, 避免字串拼接)。
@@ -99,6 +112,7 @@
 *   **通訊**: WebSocket (Client <-> Gateway), gRPC (Internal, 準備中)。
 *   **日誌**: Zerolog + SmartWriter (Async Buffered)。
 *   **協議**: JSON (Header + Body)。
+*   **廣播**: Monolith 模式下使用 Function Callback。
 
 ---
 

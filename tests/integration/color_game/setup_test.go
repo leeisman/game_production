@@ -26,11 +26,15 @@ func NewTestBroadcaster() *TestBroadcaster {
 	}
 }
 
-func (m *TestBroadcaster) Broadcast(message proto.Message) {
+func (m *TestBroadcaster) Broadcast(gameCode string, message proto.Message) {
 	m.Messages <- message
 }
 
-func (m *TestBroadcaster) SendToUser(userID int64, message proto.Message) {
+func (m *TestBroadcaster) GSBroadcast(message proto.Message) {
+	m.Messages <- message
+}
+
+func (m *TestBroadcaster) SendToUser(userID int64, gameCode string, message proto.Message) {
 	m.Messages <- message
 }
 

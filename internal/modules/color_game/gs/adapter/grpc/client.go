@@ -22,11 +22,11 @@ func NewColorGameClient(conn *grpc.ClientConn) colorgame.ColorGameService {
 }
 
 // PlaceBet handles placing a bet via gRPC
-func (c *ClientAdapter) PlaceBet(ctx context.Context, req *pb.PlaceBetReq) (*pb.PlaceBetRsp, error) {
+func (c *ClientAdapter) PlaceBet(ctx context.Context, req *pb.ColorGamePlaceBetReq) (*pb.ColorGamePlaceBetRsp, error) {
 	return c.client.PlaceBet(ctx, req)
 }
 
 // GetState returns the current game state via gRPC
-func (c *ClientAdapter) GetState(ctx context.Context, req *pb.GetStateReq) (*pb.GetStateRsp, error) {
+func (c *ClientAdapter) GetState(ctx context.Context, req *pb.ColorGameGetStateReq) (*pb.ColorGameGetStateRsp, error) {
 	return c.client.GetState(ctx, req)
 }

@@ -213,7 +213,7 @@ func (r *Robot) Register() error {
 		}
 
 		if !result.Success && result.Error != "" {
-			err = fmt.Errorf(result.Error)
+			err = fmt.Errorf("%s", result.Error)
 			// If user already exists, we can consider it a success (or handle login)
 			// But for now, let's just retry or fail.
 			// Actually, if user exists, we should probably just proceed to login.
@@ -269,7 +269,7 @@ func (r *Robot) Login() error {
 		}
 
 		if result.Token == "" {
-			err = fmt.Errorf(result.Error)
+			err = fmt.Errorf("%s", result.Error)
 			continue
 		}
 

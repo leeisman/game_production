@@ -9,8 +9,8 @@ import (
 // ColorGameService defines the interface for color game operations
 type ColorGameService interface {
 	// PlaceBet handles placing a bet
-	PlaceBet(ctx context.Context, req *pbColorGame.PlaceBetReq) (*pbColorGame.PlaceBetRsp, error)
+	PlaceBet(ctx context.Context, req *pbColorGame.ColorGamePlaceBetReq) (*pbColorGame.ColorGamePlaceBetRsp, error)
 
 	// GetState returns the current game state
-	GetState(ctx context.Context, req *pbColorGame.GetStateReq) (*pbColorGame.GetStateRsp, error)
+	GetState(ctx context.Context, req *pbColorGame.ColorGameGetStateReq) (*pbColorGame.ColorGameGetStateRsp, error)
 }

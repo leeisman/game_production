@@ -56,12 +56,238 @@ export REDIS_ADDR=localhost:6379
 # 2. 啟動服務
 go run cmd/color_game/monolith/main.go
 
-# 服務將在 :8080 啟動
-# WebSocket: ws://localhost:8080/ws?token=YOUR_TOKEN
-# API: http://localhost:8080/api
+# 服務將在 :8081 啟動
+# WebSocket: ws://localhost:8081/ws?token=YOUR_TOKEN
+# API: http://localhost:8081/api
 ```
 
-### 3.3 Microservices 模式
+### 3.3 API 使用流程
+
+#### 步驟 1: 註冊用戶
+
+```bash
+curl -X POST http://localhost:8081/api/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "player1",
+    "password": "password123",
+    "email": "player1@example.com"
+  }'
+```
+
+**回應範例**:
+```json
+{
+  "user_id": 1001,
+  "success": true
+}
+```
+
+#### 步驟 2: 登入獲取 Token
+
+```bash
+curl -X POST http://localhost:8081/api/users/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "player1",
+    "password": "password123"
+  }'
+```
+
+**回應範例**:
+```json
+{
+  "user_id": 1001,
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+#### 步驟 3: 連接 WebSocket
+
+使用獲取的 token 連接 WebSocket：
+
+```javascript
+// JavaScript 範例
+const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+const ws = new WebSocket(`ws://localhost:8081/ws?token=${token}`);
+
+ws.onopen = () => {
+  console.log("WebSocket 連接成功");
+};
+
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  console.log("收到訊息:", message);
+  
+  // 處理不同類型的訊息
+  switch(message.command) {
+    case "ColorGameStateBRC":
+      // 遊戲狀態更新
+      console.log("遊戲狀態:", message.data.state);
+      console.log("剩餘時間:", message.data.left_time, "秒");
+      break;
+    case "ColorGameResultBRC":
+      // 開獎結果
+      console.log("開獎結果:", message.data.winning_color);
+      break;
+    case "ColorGameSettlementBRC":
+      // 結算通知
+      console.log("結算:", message.data);
+      if (message.data.is_winner) {
+        console.log("恭喜！贏得:", message.data.win_amount);
+      }
+      break;
+  }
+};
+```
+
+#### 步驟 4: 下注
+
+在收到 `BETTING_STARTED` 狀態後，可以進行下注：
+
+```javascript
+// 下注請求
+const betRequest = {
+  game: "color_game",
+  command: "ColorGamePlaceBetREQ",  // 使用駝峰命名
+  data: {
+    color: "red",      // 可選: red, green, blue, yellow
+    amount: 100        // 下注金額
+  }
+};
+
+ws.send(JSON.stringify(betRequest));
+```
+
+**下注回應**（立即收到）:
+
+```json
+{
+  "game_code": "color_game",
+  "command": "ColorGamePlaceBetRSP",
+  "data": {
+    "error_code": 0,
+    "bet_id": "bet_20251205123456_1001_red",
+    "error": ""
+  }
+}
+```
+
+**下注失敗回應**:
+```json
+{
+  "game_code": "color_game",
+  "command": "ColorGamePlaceBetRSP",
+  "data": {
+    "error_code": 5,
+    "bet_id": "",
+    "error": "下注時間已結束"
+  }
+}
+```
+
+**ErrorCode 對照表**:
+- `0` = SUCCESS
+- `5` = INTERNAL_ERROR
+- `302` = INVALID_BET_AMOUNT
+- `301` = ROUND_NOT_ACTIVE
+- 完整列表見 `shared/proto/common/common.proto`
+
+#### 步驟 5: 接收結算通知
+
+當回合結束後，會收到結算通知：
+
+**有下注的玩家會收到兩次通知**：
+
+1. **個人結算通知**（包含下注詳情）:
+```json
+{
+  "game_code": "color_game",
+  "command": "ColorGameSettlementBRC",
+  "data": {
+    "round_id": "20251205123456",
+    "winning_color": "red",
+    "bet_id": "bet_20251205123456_1001_red",
+    "bet_color": "red",
+    "bet_amount": 100,
+    "win_amount": 200,
+    "is_winner": true
+  }
+}
+```
+
+2. **全局廣播**（所有玩家都收到）:
+```json
+{
+  "game_code": "color_game",
+  "command": "ColorGameSettlementBRC",
+  "data": {
+    "round_id": "20251205123456",
+    "winning_color": "red",
+    "bet_id": "",
+    "bet_color": "",
+    "bet_amount": 0,
+    "win_amount": 0,
+    "is_winner": false
+  }
+}
+```
+
+**無下注的玩家只收到全局廣播**。
+
+**前端處理建議**：
+```javascript
+let hasReceivedPersonalSettlement = false;
+
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  
+  if (message.command === "ColorGameSettlementBRC") {
+    // 如果有 bet_id，這是個人結算通知
+    if (message.data.bet_id) {
+      hasReceivedPersonalSettlement = true;
+      showPersonalResult(message.data);
+    } 
+    // 如果沒有 bet_id，這是全局廣播
+    else if (!hasReceivedPersonalSettlement) {
+      // 只有沒收到個人通知的玩家才處理全局廣播
+      showWinningColor(message.data.winning_color);
+    }
+  }
+};
+```
+
+**欄位說明**:
+- `round_id`: 回合 ID
+- `winning_color`: 開獎顏色
+- `bet_id`: 下注 ID（無下注時為空）
+- `bet_color`: 下注顏色（無下注時為空）
+- `bet_amount`: 下注金額（無下注時為 0）
+- `win_amount`: 贏得金額（無下注或輸了時為 0）
+- `is_winner`: 是否贏家（無下注時為 false）
+
+### 3.4 完整流程範例 (cURL + wscat)
+
+```bash
+# 1. 註冊並登入
+TOKEN=$(curl -s -X POST http://localhost:8081/api/users/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"player1","password":"password123"}' \
+  | jq -r '.token')
+
+# 2. 使用 wscat 連接 WebSocket
+npm install -g wscat
+wscat -c "ws://localhost:8081/ws?token=$TOKEN"
+
+# 3. 等待收到 BETTING_STARTED 狀態
+
+# 4. 發送下注請求
+{"game":"color_game","command":"ColorGamePlaceBetREQ","data":{"color":"red","amount":100}}
+
+# 5. 等待開獎和結算
+```
+
+### 3.5 Microservices 模式
 
 ```bash
 # 1. 啟動 GMS (遊戲核心)
@@ -137,3 +363,122 @@ Client <-> [Gateway Service] <-> [User Service]
 ### 下注累加機制
 *   同一個玩家在同一局中，對同一個區域（如 "red"）只能有一筆下注記錄。
 *   重複下注會自動累加金額，保持 `BetID` 不變。
+
+---
+
+## 7. 遊戲狀態機流程 (Game State Machine)
+
+### 7.1 狀態轉換流程
+
+遊戲狀態機會自動循環執行以下階段：
+
+```
+ROUND_STARTED → BETTING_STARTED → DRAWING → RESULT → ROUND_ENDED → (下一回合)
+```
+
+### 7.2 各階段時長配置
+
+預設配置（可在 `StateMachine` 初始化時調整）：
+
+| 階段 | 狀態 | 持續時間 | 說明 |
+|------|------|----------|------|
+| 1. 回合開始 | `ROUND_STARTED` | **2 秒** | 生成新的回合 ID，等待玩家準備 |
+| 2. 下注階段 | `BETTING_STARTED` | **10 秒** | 玩家可以下注，倒數計時顯示剩餘時間 |
+| 3. 開獎階段 | `DRAWING` | **2 秒** | 停止下注，系統抽取結果 |
+| 4. 結果公布 | `RESULT` | **5 秒** | 顯示開獎結果，觸發結算流程 |
+| 5. 回合結束 | `ROUND_ENDED` | **3 秒** | 休息時間，準備下一回合 |
+
+**總回合時長**: 約 **22 秒** (2 + 10 + 2 + 5 + 3)
+
+### 7.3 狀態事件詳細說明
+
+#### 1. ROUND_STARTED
+```json
+{
+    "command": "ColorGameStateBRC",
+    "data": {
+        "round_id": "20251205123456",
+        "state": "EVENT_TYPE_ROUND_STARTED",
+        "left_time": 2,  // 等待 2 秒後開始下注
+        "betting_end_timestamp": 0
+    },
+    "game_code": "color_game"
+}
+```
+- **left_time**: 表示距離下注開始還有 2 秒
+- **用途**: 前端可以顯示「準備中，2 秒後開始下注」
+
+#### 2. BETTING_STARTED
+```json
+{
+    "command": "ColorGameStateBRC",
+    "data": {
+        "round_id": "20251205123456",
+        "state": "EVENT_TYPE_BETTING_STARTED",
+        "left_time": 10,  // 距離下注結束還有幾秒
+        "betting_end_timestamp": 1733377991  // 下注結束的 Unix 時間戳
+    },
+    "game_code": "color_game"
+}
+```
+- **left_time**: 下注階段剩餘時間
+- **betting_end_timestamp**: 下注結束的絕對時間
+- **用途**: 前端顯示倒數計時，玩家可以下注
+
+#### 3. DRAWING
+```json
+{
+    "command": "ColorGameStateBRC",
+    "data": {
+        "round_id": "20251205123456",
+        "state": "EVENT_TYPE_DRAWING",
+        "left_time": 2,  // 開獎階段持續 2 秒
+        "betting_end_timestamp": 1733377991
+    },
+    "game_code": "color_game"
+}
+```
+- **用途**: 停止接受下注，顯示開獎動畫
+
+#### 4. RESULT
+```json
+{
+    "command": "ColorGameResultBRC",
+    "data": {
+        "round_id": "20251205123456",
+        "winning_color": "red",  // 開獎結果
+        "left_time": 5,  // 結果顯示持續 5 秒
+        "timestamp": 1733377993
+    },
+    "game_code": "color_game"
+}
+```
+- **用途**: 顯示開獎結果，觸發玩家結算
+
+#### 5. ROUND_ENDED
+```json
+{
+    "command": "ColorGameStateBRC",
+    "data": {
+        "round_id": "20251205123456",
+        "state": "EVENT_TYPE_ROUND_ENDED",
+        "left_time": 3,  // 休息時間 3 秒
+        "betting_end_timestamp": 1733377991
+    },
+    "game_code": "color_game"
+}
+```
+- **用途**: 回合結束，準備下一回合
+
+### 7.4 自定義時長配置
+
+如需調整各階段時長，可在啟動時修改：
+
+```go
+stateMachine := gmsMachine.NewStateMachine()
+stateMachine.WaitDuration = 3 * time.Second      // 回合開始等待 3 秒
+stateMachine.BettingDuration = 30 * time.Second  // 下注 30 秒
+stateMachine.DrawingDuration = 3 * time.Second   // 開獎 3 秒
+stateMachine.ResultDuration = 10 * time.Second   // 結果顯示 10 秒
+stateMachine.RestDuration = 5 * time.Second      // 休息 5 秒
+```

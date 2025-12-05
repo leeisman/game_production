@@ -25,26 +25,35 @@ type MockBroadcaster struct {
 	events []proto.Message
 }
 
-func (m *MockBroadcaster) Broadcast(event proto.Message) {
+func (m *MockBroadcaster) Broadcast(gameCode string, event proto.Message) {
 	if m.events == nil {
 		m.events = make([]proto.Message, 0)
 	}
 	m.events = append(m.events, event)
 }
 
-func (m *MockBroadcaster) SendToUser(userID int64, event proto.Message) {
+func (m *MockBroadcaster) SendToUser(userID int64, gameCode string, message proto.Message) {
 	if m.events == nil {
 		m.events = make([]proto.Message, 0)
 	}
-	m.events = append(m.events, event)
+	m.events = append(m.events, message)
+}
+
+func (m *MockBroadcaster) GSBroadcast(message proto.Message) {
+	if m.events == nil {
+		m.events = make([]proto.Message, 0)
+	}
+	m.events = append(m.events, message)
 }
 
 func TestBetting(t *testing.T) {
 	// 1. Setup GMS
 	stateMachine := gmsMachine.NewStateMachine()
+	stateMachine.WaitDuration = 50 * time.Millisecond
 	stateMachine.BettingDuration = 500 * time.Millisecond
 	stateMachine.DrawingDuration = 100 * time.Millisecond
 	stateMachine.ResultDuration = 100 * time.Millisecond
+	stateMachine.RestDuration = 50 * time.Millisecond
 
 	gatewayBroadcaster := &MockBroadcaster{}
 	gsBroadcaster := &MockBroadcaster{}
@@ -52,7 +61,7 @@ func TestBetting(t *testing.T) {
 	// Mock GameRoundRepository for GMS
 	gameRoundRepo := &MockGameRoundRepository{}
 
-	roundUC := gmsUC.NewRoundUseCase(stateMachine, gatewayBroadcaster, gsBroadcaster, gameRoundRepo)
+	roundUC := gmsUC.NewGMSUseCase(stateMachine, gatewayBroadcaster, gsBroadcaster, gameRoundRepo)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -67,14 +76,17 @@ func TestBetting(t *testing.T) {
 	walletSvc := wallet.NewMockService()
 
 	gsEventBroadcaster := &MockBroadcaster{}
-	playerUC := gsUC.NewPlayerUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, gsEventBroadcaster)
+	gsUseCase := gsUC.NewGSUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, gsEventBroadcaster)
+	gsHandler := gsLocal.NewHandler(gsUseCase)
 
-	_ = gsLocal.NewGSBroadcaster(playerUC)
+	// GS Broadcaster (listens to GMS events and triggers settlement)
+	// gsHandler implements both ColorGameService and GSBroadcaster
+	roundUC.SetGSBroadcaster(gsHandler)
 
 	// 3. Wait for betting state
 	var currentRoundID string
 	for i := 0; i < 20; i++ {
-		round, err := playerUC.GetCurrentRound(ctx, 1001)
+		round, err := gsUseCase.GetCurrentRound(ctx, 1001)
 		if err == nil && round["state"] == string(gmsDomain.StateBetting) {
 			currentRoundID = round["round_id"].(string)
 			break
@@ -107,7 +119,7 @@ func TestBetting(t *testing.T) {
 
 	// Place initial bets
 	for _, tc := range testCases {
-		_, err := playerUC.PlaceBet(ctx, tc.userID, tc.color, tc.amount)
+		_, err := gsUseCase.PlaceBet(ctx, tc.userID, tc.color, tc.amount)
 		if err != nil {
 			t.Fatalf("PlaceBet failed for user %d: %v", tc.userID, err)
 		}
@@ -119,7 +131,7 @@ func TestBetting(t *testing.T) {
 	originalBet, _ := betRepo.GetUserBet(ctx, currentRoundID, 1001, gsDomain.ColorRed)
 	originalBetID := originalBet.BetID
 
-	_, err := playerUC.PlaceBet(ctx, 1001, gsDomain.ColorRed, 50)
+	_, err := gsUseCase.PlaceBet(ctx, 1001, gsDomain.ColorRed, 50)
 	if err != nil {
 		t.Fatalf("Second PlaceBet failed for user 1001: %v", err)
 	}
@@ -157,7 +169,7 @@ func TestBetting(t *testing.T) {
 	}
 
 	// 7. Test GetCurrentRound returns player bets
-	round, err := playerUC.GetCurrentRound(ctx, 1001)
+	round, err := gsUseCase.GetCurrentRound(ctx, 1001)
 	if err != nil {
 		t.Fatalf("GetCurrentRound failed: %v", err)
 	}

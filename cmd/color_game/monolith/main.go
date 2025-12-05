@@ -14,7 +14,6 @@ import (
 
 	"github.com/frankieli/game_product/internal/config"
 	colorgameGMSLocal "github.com/frankieli/game_product/internal/modules/color_game/gms/adapter/local"
-	colorgameGMSDomain "github.com/frankieli/game_product/internal/modules/color_game/gms/domain"
 	colorgameGMSMachine "github.com/frankieli/game_product/internal/modules/color_game/gms/machine"
 	colorgameGMSRepo "github.com/frankieli/game_product/internal/modules/color_game/gms/repository/db"
 	colorgameGMSUseCase "github.com/frankieli/game_product/internal/modules/color_game/gms/usecase"
@@ -71,7 +70,6 @@ func main() {
 	cfg := config.LoadMonolithConfig()
 
 	// 2. Initialize Infrastructure
-	// 2. Initialize Infrastructure
 	dbConnStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		cfg.User.Database.Host, cfg.User.Database.Port, cfg.User.Database.User, cfg.User.Database.Password, cfg.User.Database.Name)
 
@@ -118,7 +116,7 @@ func main() {
 	sessionRepo := userRepo.NewSessionRepository(db)
 	userUC := userUseCase.NewUserUseCase(userRepository, sessionRepo, cfg.User.JWT.Secret, cfg.User.JWT.Duration)
 	userSvc := userLocal.NewHandler(userUC) // Use local adapter
-	userHandler := userHttp.NewHandler(userUC)
+	userHttpHandler := userHttp.NewHandler(userUC)
 	logger.InfoGlobal().Msg("✅ User module initialized")
 
 	// Wallet Module (Mock)
@@ -142,17 +140,15 @@ func main() {
 	}()
 	logger.InfoGlobal().Msg("  ✅ State machine started")
 
-	// Auto Migrate GameRound and BetOrder
-	db.AutoMigrate(&colorgameGMSDomain.GameRound{}, &colorgameGSDomain.BetOrder{})
 	gameRoundRepo := colorgameGMSRepo.NewGameRoundRepository(db)
 
 	// Create Broadcasters
 	// Gateway listening to GMS events (and forwarding to WS)
-	broadcaster := gatewayAdapter.NewBroadcaster(wsManager)
+	gatewayHandler := gatewayAdapter.NewHandler(wsManager)
 
 	// Initialize GMS with multiple broadcasters (Gateway initially, GS later)
-	roundUC := colorgameGMSUseCase.NewRoundUseCase(stateMachine, broadcaster, nil, gameRoundRepo)
-	gmsHandler := colorgameGMSLocal.NewHandler(roundUC)
+	gmsUC := colorgameGMSUseCase.NewGMSUseCase(stateMachine, gatewayHandler, nil, gameRoundRepo)
+	gmsHandler := colorgameGMSLocal.NewHandler(gmsUC)
 	logger.InfoGlobal().Msg("  ✅ GMS initialized")
 
 	// 2. Initialize GS (Game Service)
@@ -166,17 +162,15 @@ func main() {
 	}
 
 	// Initialize BetOrderRepository for bet history
+	// Initialize BetOrderRepository for bet history
 	betOrderRepo := colorgameGSDB.NewBetOrderRepository(db)
 
 	// gmsHandler implements service.GMSService directly now
-	playerUC := colorgameGSUseCase.NewPlayerUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, broadcaster)
-	gsHandler := colorgameGSLocal.NewHandler(playerUC)
+	gsUseCase := colorgameGSUseCase.NewGSUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, gatewayHandler)
+	gsHandler := colorgameGSLocal.NewHandler(gsUseCase)
 
-	// Initialize GS Broadcaster (listens to GMS events and triggers settlement)
-	gsBroadcaster := colorgameGSLocal.NewGSBroadcaster(playerUC)
-
-	// Set GS Broadcaster to GMS RoundUseCase
-	roundUC.SetGSBroadcaster(gsBroadcaster)
+	// Set GS Handler as broadcaster (it implements both ColorGameService and GSBroadcaster)
+	gmsUC.SetGSBroadcaster(gsHandler)
 
 	logger.InfoGlobal().Msg("  ✅ GS initialized")
 
@@ -185,7 +179,7 @@ func main() {
 	logger.InfoGlobal().Msg("✅ Color Game ready")
 
 	// Initialize HTTP Handler
-	httpHandler := gatewayHttp.NewHandler(gatewayUC, wsManager, userSvc)
+	gatewayHttpHandler := gatewayHttp.NewHandler(gatewayUC, wsManager, userSvc)
 
 	// 4. Setup HTTP Server
 	r := gin.New()
@@ -198,12 +192,12 @@ func main() {
 	api := r.Group("/api")
 	{
 		// Let User module register its own routes
-		userHandler.RegisterRoutes(api.Group("/users"))
+		userHttpHandler.RegisterRoutes(api.Group("/users"))
 	}
 
 	// WebSocket Route
 	r.GET("/ws", func(c *gin.Context) {
-		httpHandler.HandleWebSocket(c.Writer, c.Request)
+		gatewayHttpHandler.HandleWebSocket(c.Writer, c.Request)
 	})
 
 	// 5. Start Server

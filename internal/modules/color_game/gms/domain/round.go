@@ -30,6 +30,7 @@ type Round struct {
 	StartTime  time.Time
 	BettingEnd time.Time
 	TotalBets  int
+	LeftTime   int64
 }
 
 // NewRound creates a new round

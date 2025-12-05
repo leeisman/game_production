@@ -13,12 +13,12 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/frankieli/game_product/internal/config"
-	colorgameGMSGRPC "github.com/frankieli/game_product/internal/modules/color_game/gms/adapter/grpc"
 	colorgameGMSDomain "github.com/frankieli/game_product/internal/modules/color_game/gms/domain"
 	colorgameGMSMachine "github.com/frankieli/game_product/internal/modules/color_game/gms/machine"
 	colorgameGMSRepo "github.com/frankieli/game_product/internal/modules/color_game/gms/repository/db"
 	colorgameGMSUseCase "github.com/frankieli/game_product/internal/modules/color_game/gms/usecase"
 	"github.com/frankieli/game_product/pkg/discovery"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -49,20 +49,23 @@ func main() {
 		gameRoundRepo = colorgameGMSRepo.NewGameRoundRepository(db)
 	}
 
-	// Initialize RoundUseCase (no broadcaster in microservices mode)
-	// Events will be streamed via gRPC
-	roundUC := colorgameGMSUseCase.NewRoundUseCase(stateMachine, nil, nil, gameRoundRepo)
+	// Initialize Redis
+	rdb := redis.NewClient(&redis.Options{
+		Addr: fmt.Sprintf("%s:%s", cfg.Redis.Host, cfg.Redis.Port),
+	})
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		log.Printf("❌ Failed to connect to Redis: %v", err)
+	} else {
+		log.Println("✅ Redis connected")
+	}
+
+	// Initialize RoundUseCase
+	// Broadcaster implementation pending for microservices
+	_ = colorgameGMSUseCase.NewGMSUseCase(stateMachine, nil, nil, gameRoundRepo)
 	log.Println("✅ Round UseCase initialized")
 
-	// Start gRPC Server
-	address := ":" + cfg.Server.Port
-	log.Printf("🚀 GMS gRPC server starting on %s", address)
-	log.Println("   Endpoints:")
-	log.Println("   - RecordBet")
-	log.Println("   - GetCurrentRound")
-	log.Println("   - SubscribeEvents (streaming)")
-
-	go colorgameGMSGRPC.StartServer(address, roundUC)
+	// No gRPC server needed anymore
+	log.Println("🚀 GMS running as background worker (Redis Pub/Sub)")
 
 	// Register to Nacos
 	ip := discovery.GetOutboundIP()

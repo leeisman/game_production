@@ -9,77 +9,76 @@ import "shared/proto/common/common.proto";
 // ColorGameService defines the interface for GS operations
 service ColorGameService {
   // PlaceBet handles placing a bet
-  rpc PlaceBet(PlaceBetReq) returns (PlaceBetRsp);
+  rpc PlaceBet(ColorGamePlaceBetReq) returns (ColorGamePlaceBetRsp);
 
   // GetState returns the current game state
-  rpc GetState(GetStateReq) returns (GetStateRsp);
+  rpc GetState(ColorGameGetStateReq) returns (ColorGameGetStateRsp);
 }
 
-// GameMachineService defines the interface for GMS
-service GameMachineService {
-  // RecordBet records a bet
-  rpc RecordBet(RecordBetReq) returns (RecordBetRsp);
 
-  // GetCurrentRound gets the current round
-  rpc GetCurrentRound(GetCurrentRoundReq) returns (GetCurrentRoundRsp);
-
-  // SubscribeEvents subscribes to game events
-  rpc SubscribeEvents (SubscribeEventsReq) returns (stream GameEvent);
-}
-
-message PlaceBetReq {
+message ColorGamePlaceBetReq {
   int64 user_id = 1;
   string color = 2;
   int64 amount = 3;
 }
 
-message PlaceBetRsp {
+message ColorGamePlaceBetRsp {
   common.ErrorCode error_code = 1;
   string bet_id = 2;
   string error = 3;
 }
 
-message GetStateReq {
+message ColorGameGetStateReq {
   int64 user_id = 1;
 }
 
-message GetStateRsp {
+message ColorGameGetStateRsp {
   common.ErrorCode error_code = 1;
   bytes state_json = 2;
 }
 
-message RecordBetReq {
+message ColorGameRecordBetReq {
   string round_id = 1;
   int64 user_id = 2;
   string color = 3;
   int64 amount = 4;
 }
 
-message RecordBetRsp {
+message ColorGameRecordBetRsp {
   common.ErrorCode error_code = 1;
   string error = 2;
 }
 
-message GetCurrentRoundReq {
+message ColorGameGetCurrentRoundReq {
   int64 user_id = 1;
 }
 
-message PlayerBet {
+message ColorGamePlayerBet {
   string color = 1;
   int64 amount = 2;
 }
 
-message GetCurrentRoundRsp {
+message ColorGameGetCurrentRoundRsp {
   common.ErrorCode error_code = 1;
   string round_id = 2;
   string state = 3;
   int64 betting_end_timestamp = 4;
-  repeated PlayerBet player_bets = 5;
+  repeated ColorGamePlayerBet player_bets = 5;
+  int64 left_time = 6;
 }
 
-message SubscribeEventsReq {}
+message ColorGameSubscribeEventsReq {}
 
-enum EventType {
+message ColorGameEvent {
+  ColorGameEventType type = 1;
+  string round_id = 2;
+  string data = 3; // JSON string containing event-specific data
+  int64 timestamp = 4;
+  int64 left_time = 5;
+  int64 betting_end_timestamp = 6;
+}
+
+enum ColorGameEventType {
   EVENT_TYPE_UNSPECIFIED = 0;
   EVENT_TYPE_ROUND_STARTED = 1;
   EVENT_TYPE_BETTING_STARTED = 2;
@@ -95,9 +94,52 @@ enum EventType {
   EVENT_TYPE_MACHINE_STOPPED = 12;
 }
 
-message GameEvent {
-  EventType type = 1;
-  string round_id = 2;
-  string data = 3;
-  int64 timestamp = 4;
+message ColorGameRoundStateBRC {
+  string round_id = 1;
+  string state = 2;
+  int64 betting_end_timestamp = 3;
+  int64 left_time = 4;
+}
+
+// ColorGameBetConfirmation is sent to user after a bet is placed
+message ColorGameBetConfirmation {
+  string round_id = 1;
+  string bet_id = 2;
+  int64 user_id = 3;
+  string color = 4;
+  int64 amount = 5;
+  bool is_update = 6; // true if this was an accumulation of existing bet
+}
+
+// ColorGameSettlementBRC is sent to users after round settlement
+// 有下注和無下注的玩家收到的欄位不同
+message ColorGameSettlementBRC {
+  string round_id = 1;
+  string winning_color = 2;
+  
+  // 以下欄位只有下注的玩家才有值
+  string bet_id = 3;           // 下注 ID（無下注時為空）
+  string bet_color = 4;        // 下注顏色（無下注時為空）
+  int64 bet_amount = 5;        // 下注金額（無下注時為 0）
+  int64 win_amount = 6;        // 贏得金額（無下注或輸了時為 0）
+  bool is_winner = 7;          // 是否贏家（無下注時為 false）
+}
+
+// CommandType defines all WebSocket command types
+// All commands follow PascalCase naming convention
+enum CommandType {
+  COMMAND_TYPE_UNSPECIFIED = 0;
+  
+  // Client -> Server (REQ)
+  COMMAND_TYPE_PLACE_BET_REQ = 1;
+  COMMAND_TYPE_GET_STATE_REQ = 2;
+  
+  // Server -> Client (RSP)
+  COMMAND_TYPE_PLACE_BET_RSP = 3;
+  COMMAND_TYPE_GET_STATE_RSP = 4;
+  
+  // Server -> Client (BRC - Broadcast)
+  COMMAND_TYPE_COLOR_GAME_STATE_BRC = 5;
+  COMMAND_TYPE_RESULT_BRC = 6;
+  COMMAND_TYPE_SETTLEMENT_BRC = 7;
 }

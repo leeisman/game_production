@@ -13,9 +13,11 @@ import (
 
 // GameEvent represents a game event
 type GameEvent struct {
-	Type    pbColorGame.EventType
-	RoundID string
-	Data    interface{}
+	Type                pbColorGame.ColorGameEventType
+	RoundID             string
+	Data                interface{}
+	LeftTime            int64
+	BettingEndTimestamp int64
 }
 
 // EventHandler handles game events
@@ -29,6 +31,7 @@ type RoundView struct {
 	StartTime  time.Time
 	BettingEnd time.Time
 	TotalBets  int
+	LeftTime   int64
 }
 
 // StateMachine manages the game state machine (application layer)
@@ -44,6 +47,9 @@ type StateMachine struct {
 	BettingDuration time.Duration
 	DrawingDuration time.Duration
 	ResultDuration  time.Duration
+	WaitDuration    time.Duration // Wait time after ROUND_STARTED before betting
+	RestDuration    time.Duration // Rest time after ROUND_ENDED before next round
+	phaseEndTime    time.Time
 
 	stopping bool
 }
@@ -56,6 +62,8 @@ func NewStateMachine() *StateMachine {
 		BettingDuration: 10 * time.Second,
 		DrawingDuration: 2 * time.Second,
 		ResultDuration:  5 * time.Second,
+		WaitDuration:    2 * time.Second, // 2 seconds wait after ROUND_STARTED
+		RestDuration:    3 * time.Second,
 	}
 }
 
@@ -96,8 +104,10 @@ func (sm *StateMachine) Start(ctx context.Context) {
 		if stopping {
 			logger.Info(ctx).Msg("🛑 [GMS] State Machine Stopping (Graceful)")
 			sm.emitEvent(GameEvent{
-				Type:    pbColorGame.EventType_EVENT_TYPE_MACHINE_STOPPED,
-				RoundID: "",
+				Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_MACHINE_STOPPED,
+				RoundID:             "",
+				LeftTime:            0,
+				BettingEndTimestamp: 0,
 			})
 			return
 		}
@@ -121,9 +131,14 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 		Msg("🔄 [GMS] 回合開始 (Round Started)")
 
 	sm.emitEvent(GameEvent{
-		Type:    pbColorGame.EventType_EVENT_TYPE_ROUND_STARTED,
-		RoundID: roundID,
+		Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_ROUND_STARTED,
+		RoundID:             roundID,
+		LeftTime:            int64(sm.WaitDuration.Seconds()), // Wait time before betting starts
+		BettingEndTimestamp: 0,
 	})
+
+	// Wait before starting betting phase
+	time.Sleep(sm.WaitDuration)
 
 	//--------------------------------------------
 	// Betting phase
@@ -131,6 +146,7 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 	sm.mu.Lock()
 	round.StartBetting(sm.BettingDuration)
 	bettingEnd := round.BettingEnd
+	sm.phaseEndTime = bettingEnd
 	sm.mu.Unlock()
 
 	logger.Info(ctx).
@@ -140,9 +156,11 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 		Msg("🟢 [GMS] 開始下注 (Betting Started)")
 
 	sm.emitEvent(GameEvent{
-		Type:    pbColorGame.EventType_EVENT_TYPE_BETTING_STARTED,
-		RoundID: roundID,
-		Data:    bettingEnd,
+		Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_BETTING_STARTED,
+		RoundID:             roundID,
+		Data:                bettingEnd,
+		LeftTime:            int64(sm.BettingDuration.Seconds()),
+		BettingEndTimestamp: bettingEnd.Unix(),
 	})
 
 	time.Sleep(sm.BettingDuration)
@@ -154,6 +172,7 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 
 	sm.mu.Lock()
 	round.Draw(result)
+	sm.phaseEndTime = time.Now().Add(sm.DrawingDuration)
 	sm.mu.Unlock()
 
 	logger.Info(ctx).
@@ -163,9 +182,11 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 		Msg("🎲 [GMS] 停止下注，正在開獎 (Drawing)")
 
 	sm.emitEvent(GameEvent{
-		Type:    pbColorGame.EventType_EVENT_TYPE_DRAWING,
-		RoundID: roundID,
-		Data:    result,
+		Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_DRAWING,
+		RoundID:             roundID,
+		Data:                result,
+		LeftTime:            int64(sm.DrawingDuration.Seconds()),
+		BettingEndTimestamp: round.BettingEnd.Unix(),
 	})
 
 	time.Sleep(sm.DrawingDuration)
@@ -175,6 +196,7 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 	//--------------------------------------------
 	sm.mu.Lock()
 	round.ShowResult()
+	sm.phaseEndTime = time.Now().Add(sm.ResultDuration)
 	sm.mu.Unlock()
 
 	logger.Info(ctx).
@@ -184,21 +206,35 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 		Msg("📊 [GMS] 公布結果 (Show Result)")
 
 	sm.emitEvent(GameEvent{
-		Type:    pbColorGame.EventType_EVENT_TYPE_RESULT,
-		RoundID: roundID,
-		Data:    result,
+		Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_RESULT,
+		RoundID:             roundID,
+		Data:                result,
+		LeftTime:            int64(sm.ResultDuration.Seconds()),
+		BettingEndTimestamp: round.BettingEnd.Unix(),
 	})
 
 	time.Sleep(sm.ResultDuration)
 
+	//--------------------------------------------
+	// Round Ended phase (Rest)
+	//--------------------------------------------
 	logger.Info(ctx).
 		Str("round_id", roundID).
 		Msg("🏁 [GMS] 回合結束 (Round Ended)")
 
 	sm.emitEvent(GameEvent{
-		Type:    pbColorGame.EventType_EVENT_TYPE_ROUND_ENDED,
-		RoundID: roundID,
+		Type:                pbColorGame.ColorGameEventType_EVENT_TYPE_ROUND_ENDED,
+		RoundID:             roundID,
+		Data:                nil,
+		LeftTime:            int64(sm.RestDuration.Seconds()),
+		BettingEndTimestamp: round.BettingEnd.Unix(),
 	})
+
+	sm.mu.Lock()
+	sm.phaseEndTime = time.Now().Add(sm.RestDuration)
+	sm.mu.Unlock()
+
+	time.Sleep(sm.RestDuration)
 }
 
 func (sm *StateMachine) drawResult() domain.Color {
@@ -225,6 +261,11 @@ func (sm *StateMachine) GetCurrentRound() RoundView {
 	}
 
 	r := sm.currentRound
+	leftTime := int64(time.Until(sm.phaseEndTime).Seconds())
+	if leftTime < 0 {
+		leftTime = 0
+	}
+
 	return RoundView{
 		RoundID:    r.RoundID,
 		State:      r.State,
@@ -232,6 +273,7 @@ func (sm *StateMachine) GetCurrentRound() RoundView {
 		StartTime:  r.StartTime,
 		BettingEnd: r.BettingEnd,
 		TotalBets:  r.TotalBets,
+		LeftTime:   leftTime,
 	}
 }
 

@@ -24,13 +24,15 @@ import (
 func TestSettlement(t *testing.T) {
 	// 1. Setup GMS
 	stateMachine := gmsMachine.NewStateMachine()
+	stateMachine.WaitDuration = 50 * time.Millisecond
 	stateMachine.BettingDuration = 500 * time.Millisecond
 	stateMachine.DrawingDuration = 100 * time.Millisecond
 	stateMachine.ResultDuration = 100 * time.Millisecond
+	stateMachine.RestDuration = 50 * time.Millisecond
 
 	broadcaster := &TestBroadcaster{Messages: make(chan proto.Message, 100)}
 	gameRoundRepo := &MockGameRoundRepository{}
-	roundUC := gmsUC.NewRoundUseCase(stateMachine, broadcaster, broadcaster, gameRoundRepo)
+	roundUC := gmsUC.NewGMSUseCase(stateMachine, broadcaster, broadcaster, gameRoundRepo)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -44,9 +46,10 @@ func TestSettlement(t *testing.T) {
 	betOrderRepo := &MockBetOrderRepository{}
 	walletSvc := wallet.NewMockService()
 
-	playerUC := gsUC.NewPlayerUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, broadcaster)
+	playerUC := gsUC.NewGSUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, broadcaster)
 
-	_ = gsLocal.NewGSBroadcaster(playerUC)
+	gsHandler := gsLocal.NewHandler(playerUC)
+	roundUC.SetGSBroadcaster(gsHandler)
 
 	// 3. Wait for betting state
 	var currentRoundID string
@@ -133,18 +136,15 @@ func TestSettlement(t *testing.T) {
 	}
 
 	// 7. Verify settlement broadcast
-	// 7. Verify settlement broadcast
 	timeout := time.After(2 * time.Second)
 	foundSettlement := false
 
 	for {
 		select {
 		case msg := <-broadcaster.Messages:
-			if event, ok := msg.(*pbColorGame.GameEvent); ok {
-				if event.Type == pbColorGame.EventType_EVENT_TYPE_SETTLEMENT {
-					foundSettlement = true
-					break
-				}
+			if _, ok := msg.(*pbColorGame.ColorGameSettlementBRC); ok {
+				foundSettlement = true
+				break
 			}
 		case <-timeout:
 			t.Error("Timeout waiting for settlement broadcast")

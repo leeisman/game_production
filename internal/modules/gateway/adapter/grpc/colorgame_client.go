@@ -17,10 +17,10 @@ func NewColorGameClient(conn *grpc.ClientConn) *ColorGameClient {
 	}
 }
 
-func (c *ColorGameClient) PlaceBet(ctx context.Context, req *pb.PlaceBetReq) (*pb.PlaceBetRsp, error) {
+func (c *ColorGameClient) PlaceBet(ctx context.Context, req *pb.ColorGamePlaceBetReq) (*pb.ColorGamePlaceBetRsp, error) {
 	return c.client.PlaceBet(ctx, req)
 }
 
-func (c *ColorGameClient) GetState(ctx context.Context, req *pb.GetStateReq) (*pb.GetStateRsp, error) {
+func (c *ColorGameClient) GetState(ctx context.Context, req *pb.ColorGameGetStateReq) (*pb.ColorGameGetStateRsp, error) {
 	return c.client.GetState(ctx, req)
 }

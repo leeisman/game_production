@@ -10,24 +10,25 @@ import (
 	"github.com/frankieli/game_product/internal/modules/color_game/gms/domain"
 	"github.com/frankieli/game_product/internal/modules/color_game/gms/machine"
 	"github.com/frankieli/game_product/pkg/logger"
+	"github.com/frankieli/game_product/pkg/service"
 	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
 )
 
-// RoundUseCase handles round management logic
-type RoundUseCase struct {
+// GMSUseCase handles game round logic
+type GMSUseCase struct {
 	stateMachine       *machine.StateMachine
 	betCount           map[string]int                // roundID -> bet count
 	betPlayers         map[string]map[int64]struct{} // roundID -> set of userIDs
 	betAmount          map[string]float64            // roundID -> total bet amount
-	gatewayBroadcaster domain.Broadcaster
-	gsBroadcaster      domain.Broadcaster
+	gatewayBroadcaster service.GatewayService
+	gsBroadcaster      service.GSBroadcaster
 	gameRoundRepo      domain.GameRoundRepository
 	mu                 sync.RWMutex
 }
 
-// NewRoundUseCase creates a new round use case
-func NewRoundUseCase(stateMachine *machine.StateMachine, gatewayBroadcaster domain.Broadcaster, gsBroadcaster domain.Broadcaster, gameRoundRepo domain.GameRoundRepository) *RoundUseCase {
-	uc := &RoundUseCase{
+// NewGMSUseCase creates a new round use case
+func NewGMSUseCase(stateMachine *machine.StateMachine, gatewayBroadcaster service.GatewayService, gsBroadcaster service.GSBroadcaster, gameRoundRepo domain.GameRoundRepository) *GMSUseCase {
+	uc := &GMSUseCase{
 		stateMachine:       stateMachine,
 		betCount:           make(map[string]int),
 		betPlayers:         make(map[string]map[int64]struct{}),
@@ -43,28 +44,66 @@ func NewRoundUseCase(stateMachine *machine.StateMachine, gatewayBroadcaster doma
 	return uc
 }
 
-// SetGSBroadcaster sets the GS broadcaster (to resolve circular dependency)
-func (uc *RoundUseCase) SetGSBroadcaster(broadcaster domain.Broadcaster) {
+// SetGSBroadcaster sets the GS broadcaster
+func (uc *GMSUseCase) SetGSBroadcaster(gsBroadcaster service.GSBroadcaster) {
 	uc.mu.Lock()
 	defer uc.mu.Unlock()
-	uc.gsBroadcaster = broadcaster
+	uc.gsBroadcaster = gsBroadcaster
 }
 
-// handleGameEvent handles game events from state machine and broadcasts to players
-func (uc *RoundUseCase) handleGameEvent(event machine.GameEvent) {
+// handleGameEvent handles game events from the state machine
+func (uc *GMSUseCase) handleGameEvent(event machine.GameEvent) {
 	// Convert event to Proto
-	pbEvent := &pbColorGame.GameEvent{
+	// Map state machine events to ColorGameRoundStateBRC
+	switch event.Type {
+	case pbColorGame.ColorGameEventType_EVENT_TYPE_ROUND_STARTED,
+		pbColorGame.ColorGameEventType_EVENT_TYPE_BETTING_STARTED,
+		pbColorGame.ColorGameEventType_EVENT_TYPE_DRAWING,
+		pbColorGame.ColorGameEventType_EVENT_TYPE_RESULT,
+		pbColorGame.ColorGameEventType_EVENT_TYPE_ROUND_ENDED,
+		pbColorGame.ColorGameEventType_EVENT_TYPE_MACHINE_STOPPED:
+
+		// Convert event type enum to string
+		brc := &pbColorGame.ColorGameRoundStateBRC{
+			RoundId:             event.RoundID,
+			State:               event.Type.String(),
+			BettingEndTimestamp: event.BettingEndTimestamp,
+			LeftTime:            event.LeftTime,
+		}
+
+		// Broadcast BRC to gateway
+		if uc.gatewayBroadcaster != nil {
+			uc.gatewayBroadcaster.Broadcast("color_game", brc)
+		}
+
+	default:
+		// For other events
+		pbEvent := &pbColorGame.ColorGameEvent{
+			Type:      event.Type,
+			RoundId:   event.RoundID,
+			Data:      fmt.Sprintf("%v", event.Data),
+			Timestamp: time.Now().Unix(),
+			LeftTime:  event.LeftTime,
+		}
+		if uc.gatewayBroadcaster != nil {
+			uc.gatewayBroadcaster.Broadcast("color_game", pbEvent)
+		}
+	}
+
+	// We still create pbEvent for DB logging and GS internal use if needed
+	pbEvent := &pbColorGame.ColorGameEvent{
 		Type:      event.Type,
 		RoundId:   event.RoundID,
 		Data:      fmt.Sprintf("%v", event.Data), // Convert data to string
 		Timestamp: time.Now().Unix(),
+		LeftTime:  event.LeftTime,
 	}
 
 	// Update DB
 	if uc.gameRoundRepo != nil {
 		ctx := context.Background()
 		switch event.Type {
-		case pbColorGame.EventType_EVENT_TYPE_ROUND_STARTED:
+		case pbColorGame.ColorGameEventType_EVENT_TYPE_ROUND_STARTED:
 			uc.gameRoundRepo.Create(ctx, &domain.GameRound{
 				RoundID:   event.RoundID,
 				GameCode:  "color_game",
@@ -72,7 +111,7 @@ func (uc *RoundUseCase) handleGameEvent(event machine.GameEvent) {
 				StartTime: time.Now(),
 			})
 
-		case pbColorGame.EventType_EVENT_TYPE_RESULT:
+		case pbColorGame.ColorGameEventType_EVENT_TYPE_RESULT:
 			endTime := time.Now()
 
 			// Get stats from memory
@@ -89,21 +128,14 @@ func (uc *RoundUseCase) handleGameEvent(event machine.GameEvent) {
 	uc.mu.RLock()
 	defer uc.mu.RUnlock()
 
-	// Broadcast to gateway (WebSocket clients) - all events
-	if uc.gatewayBroadcaster != nil {
-		uc.gatewayBroadcaster.Broadcast(pbEvent)
-	}
-
 	// Broadcast to GS - result event (filtering done in adapter)
-	if pbEvent.Type == pbColorGame.EventType_EVENT_TYPE_RESULT && uc.gsBroadcaster != nil {
-		uc.gsBroadcaster.Broadcast(pbEvent)
+	if pbEvent.Type == pbColorGame.ColorGameEventType_EVENT_TYPE_RESULT && uc.gsBroadcaster != nil {
+		uc.gsBroadcaster.GSBroadcast(pbEvent)
 	}
 }
 
-// IncrementBetCount increments the bet count for a round (for coordination only)
-// GMS doesn't need to know bet details (color) - that's GS's responsibility
-// But it needs userID to count unique players
-func (uc *RoundUseCase) IncrementBetCount(ctx context.Context, roundID string, userID int64, amount float64) error {
+// IncrementBetCount increments the bet count for the current round
+func (uc *GMSUseCase) IncrementBetCount(ctx context.Context, roundID string, userID int64, amount float64) error {
 	logger.Debug(ctx).
 		Str("round_id", roundID).
 		Int64("user_id", userID).
@@ -145,8 +177,7 @@ func (uc *RoundUseCase) IncrementBetCount(ctx context.Context, roundID string, u
 	return nil
 }
 
-// GetCurrentRound returns current round info
-func (uc *RoundUseCase) GetCurrentRound(ctx context.Context) (*domain.Round, error) {
+func (uc *GMSUseCase) GetCurrentRound(ctx context.Context) (*domain.Round, error) {
 	roundView := uc.stateMachine.GetCurrentRound()
 	if roundView.RoundID == "" {
 		return nil, fmt.Errorf("no active round")
@@ -156,10 +187,11 @@ func (uc *RoundUseCase) GetCurrentRound(ctx context.Context) (*domain.Round, err
 		RoundID:    roundView.RoundID,
 		State:      roundView.State,
 		BettingEnd: roundView.BettingEnd,
+		LeftTime:   roundView.LeftTime,
 	}, nil
 }
 
 // RegisterEventHandler registers an additional event handler
-func (uc *RoundUseCase) RegisterEventHandler(handler machine.EventHandler) {
+func (uc *GMSUseCase) RegisterEventHandler(handler machine.EventHandler) {
 	uc.stateMachine.RegisterEventHandler(handler)
 }

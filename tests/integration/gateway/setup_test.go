@@ -17,8 +17,9 @@ func init() {
 
 type MockBroadcaster struct{}
 
-func (m *MockBroadcaster) Broadcast(message proto.Message)                {}
-func (m *MockBroadcaster) SendToUser(userID int64, message proto.Message) {}
+func (m *MockBroadcaster) Broadcast(gameCode string, message proto.Message)                {}
+func (m *MockBroadcaster) SendToUser(userID int64, gameCode string, message proto.Message) {}
+func (m *MockBroadcaster) GSBroadcast(message proto.Message)                               {}
 
 // MockGameRoundRepository for testing
 type MockGameRoundRepository struct {

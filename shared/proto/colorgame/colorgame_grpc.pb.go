@@ -23,9 +23,9 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ColorGameServiceClient interface {
 	// PlaceBet handles placing a bet
-	PlaceBet(ctx context.Context, in *PlaceBetReq, opts ...grpc.CallOption) (*PlaceBetRsp, error)
+	PlaceBet(ctx context.Context, in *ColorGamePlaceBetReq, opts ...grpc.CallOption) (*ColorGamePlaceBetRsp, error)
 	// GetState returns the current game state
-	GetState(ctx context.Context, in *GetStateReq, opts ...grpc.CallOption) (*GetStateRsp, error)
+	GetState(ctx context.Context, in *ColorGameGetStateReq, opts ...grpc.CallOption) (*ColorGameGetStateRsp, error)
 }
 
 type colorGameServiceClient struct {
@@ -36,8 +36,8 @@ func NewColorGameServiceClient(cc grpc.ClientConnInterface) ColorGameServiceClie
 	return &colorGameServiceClient{cc}
 }
 
-func (c *colorGameServiceClient) PlaceBet(ctx context.Context, in *PlaceBetReq, opts ...grpc.CallOption) (*PlaceBetRsp, error) {
-	out := new(PlaceBetRsp)
+func (c *colorGameServiceClient) PlaceBet(ctx context.Context, in *ColorGamePlaceBetReq, opts ...grpc.CallOption) (*ColorGamePlaceBetRsp, error) {
+	out := new(ColorGamePlaceBetRsp)
 	err := c.cc.Invoke(ctx, "/colorgame.ColorGameService/PlaceBet", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -45,8 +45,8 @@ func (c *colorGameServiceClient) PlaceBet(ctx context.Context, in *PlaceBetReq, 
 	return out, nil
 }
 
-func (c *colorGameServiceClient) GetState(ctx context.Context, in *GetStateReq, opts ...grpc.CallOption) (*GetStateRsp, error) {
-	out := new(GetStateRsp)
+func (c *colorGameServiceClient) GetState(ctx context.Context, in *ColorGameGetStateReq, opts ...grpc.CallOption) (*ColorGameGetStateRsp, error) {
+	out := new(ColorGameGetStateRsp)
 	err := c.cc.Invoke(ctx, "/colorgame.ColorGameService/GetState", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -59,9 +59,9 @@ func (c *colorGameServiceClient) GetState(ctx context.Context, in *GetStateReq, 
 // for forward compatibility
 type ColorGameServiceServer interface {
 	// PlaceBet handles placing a bet
-	PlaceBet(context.Context, *PlaceBetReq) (*PlaceBetRsp, error)
+	PlaceBet(context.Context, *ColorGamePlaceBetReq) (*ColorGamePlaceBetRsp, error)
 	// GetState returns the current game state
-	GetState(context.Context, *GetStateReq) (*GetStateRsp, error)
+	GetState(context.Context, *ColorGameGetStateReq) (*ColorGameGetStateRsp, error)
 	mustEmbedUnimplementedColorGameServiceServer()
 }
 
@@ -69,10 +69,10 @@ type ColorGameServiceServer interface {
 type UnimplementedColorGameServiceServer struct {
 }
 
-func (UnimplementedColorGameServiceServer) PlaceBet(context.Context, *PlaceBetReq) (*PlaceBetRsp, error) {
+func (UnimplementedColorGameServiceServer) PlaceBet(context.Context, *ColorGamePlaceBetReq) (*ColorGamePlaceBetRsp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PlaceBet not implemented")
 }
-func (UnimplementedColorGameServiceServer) GetState(context.Context, *GetStateReq) (*GetStateRsp, error) {
+func (UnimplementedColorGameServiceServer) GetState(context.Context, *ColorGameGetStateReq) (*ColorGameGetStateRsp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetState not implemented")
 }
 func (UnimplementedColorGameServiceServer) mustEmbedUnimplementedColorGameServiceServer() {}
@@ -89,7 +89,7 @@ func RegisterColorGameServiceServer(s grpc.ServiceRegistrar, srv ColorGameServic
 }
 
 func _ColorGameService_PlaceBet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PlaceBetReq)
+	in := new(ColorGamePlaceBetReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -101,13 +101,13 @@ func _ColorGameService_PlaceBet_Handler(srv interface{}, ctx context.Context, de
 		FullMethod: "/colorgame.ColorGameService/PlaceBet",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ColorGameServiceServer).PlaceBet(ctx, req.(*PlaceBetReq))
+		return srv.(ColorGameServiceServer).PlaceBet(ctx, req.(*ColorGamePlaceBetReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _ColorGameService_GetState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetStateReq)
+	in := new(ColorGameGetStateReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func _ColorGameService_GetState_Handler(srv interface{}, ctx context.Context, de
 		FullMethod: "/colorgame.ColorGameService/GetState",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ColorGameServiceServer).GetState(ctx, req.(*GetStateReq))
+		return srv.(ColorGameServiceServer).GetState(ctx, req.(*ColorGameGetStateReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -141,197 +141,5 @@ var ColorGameService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "shared/proto/colorgame/colorgame.proto",
-}
-
-// GameMachineServiceClient is the client API for GameMachineService service.
-//
-// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type GameMachineServiceClient interface {
-	// RecordBet records a bet
-	RecordBet(ctx context.Context, in *RecordBetReq, opts ...grpc.CallOption) (*RecordBetRsp, error)
-	// GetCurrentRound gets the current round
-	GetCurrentRound(ctx context.Context, in *GetCurrentRoundReq, opts ...grpc.CallOption) (*GetCurrentRoundRsp, error)
-	// SubscribeEvents subscribes to game events
-	SubscribeEvents(ctx context.Context, in *SubscribeEventsReq, opts ...grpc.CallOption) (GameMachineService_SubscribeEventsClient, error)
-}
-
-type gameMachineServiceClient struct {
-	cc grpc.ClientConnInterface
-}
-
-func NewGameMachineServiceClient(cc grpc.ClientConnInterface) GameMachineServiceClient {
-	return &gameMachineServiceClient{cc}
-}
-
-func (c *gameMachineServiceClient) RecordBet(ctx context.Context, in *RecordBetReq, opts ...grpc.CallOption) (*RecordBetRsp, error) {
-	out := new(RecordBetRsp)
-	err := c.cc.Invoke(ctx, "/colorgame.GameMachineService/RecordBet", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *gameMachineServiceClient) GetCurrentRound(ctx context.Context, in *GetCurrentRoundReq, opts ...grpc.CallOption) (*GetCurrentRoundRsp, error) {
-	out := new(GetCurrentRoundRsp)
-	err := c.cc.Invoke(ctx, "/colorgame.GameMachineService/GetCurrentRound", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *gameMachineServiceClient) SubscribeEvents(ctx context.Context, in *SubscribeEventsReq, opts ...grpc.CallOption) (GameMachineService_SubscribeEventsClient, error) {
-	stream, err := c.cc.NewStream(ctx, &GameMachineService_ServiceDesc.Streams[0], "/colorgame.GameMachineService/SubscribeEvents", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &gameMachineServiceSubscribeEventsClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-type GameMachineService_SubscribeEventsClient interface {
-	Recv() (*GameEvent, error)
-	grpc.ClientStream
-}
-
-type gameMachineServiceSubscribeEventsClient struct {
-	grpc.ClientStream
-}
-
-func (x *gameMachineServiceSubscribeEventsClient) Recv() (*GameEvent, error) {
-	m := new(GameEvent)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-// GameMachineServiceServer is the server API for GameMachineService service.
-// All implementations must embed UnimplementedGameMachineServiceServer
-// for forward compatibility
-type GameMachineServiceServer interface {
-	// RecordBet records a bet
-	RecordBet(context.Context, *RecordBetReq) (*RecordBetRsp, error)
-	// GetCurrentRound gets the current round
-	GetCurrentRound(context.Context, *GetCurrentRoundReq) (*GetCurrentRoundRsp, error)
-	// SubscribeEvents subscribes to game events
-	SubscribeEvents(*SubscribeEventsReq, GameMachineService_SubscribeEventsServer) error
-	mustEmbedUnimplementedGameMachineServiceServer()
-}
-
-// UnimplementedGameMachineServiceServer must be embedded to have forward compatible implementations.
-type UnimplementedGameMachineServiceServer struct {
-}
-
-func (UnimplementedGameMachineServiceServer) RecordBet(context.Context, *RecordBetReq) (*RecordBetRsp, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RecordBet not implemented")
-}
-func (UnimplementedGameMachineServiceServer) GetCurrentRound(context.Context, *GetCurrentRoundReq) (*GetCurrentRoundRsp, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetCurrentRound not implemented")
-}
-func (UnimplementedGameMachineServiceServer) SubscribeEvents(*SubscribeEventsReq, GameMachineService_SubscribeEventsServer) error {
-	return status.Errorf(codes.Unimplemented, "method SubscribeEvents not implemented")
-}
-func (UnimplementedGameMachineServiceServer) mustEmbedUnimplementedGameMachineServiceServer() {}
-
-// UnsafeGameMachineServiceServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to GameMachineServiceServer will
-// result in compilation errors.
-type UnsafeGameMachineServiceServer interface {
-	mustEmbedUnimplementedGameMachineServiceServer()
-}
-
-func RegisterGameMachineServiceServer(s grpc.ServiceRegistrar, srv GameMachineServiceServer) {
-	s.RegisterService(&GameMachineService_ServiceDesc, srv)
-}
-
-func _GameMachineService_RecordBet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RecordBetReq)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(GameMachineServiceServer).RecordBet(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/colorgame.GameMachineService/RecordBet",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GameMachineServiceServer).RecordBet(ctx, req.(*RecordBetReq))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _GameMachineService_GetCurrentRound_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetCurrentRoundReq)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(GameMachineServiceServer).GetCurrentRound(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/colorgame.GameMachineService/GetCurrentRound",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GameMachineServiceServer).GetCurrentRound(ctx, req.(*GetCurrentRoundReq))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _GameMachineService_SubscribeEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(SubscribeEventsReq)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(GameMachineServiceServer).SubscribeEvents(m, &gameMachineServiceSubscribeEventsServer{stream})
-}
-
-type GameMachineService_SubscribeEventsServer interface {
-	Send(*GameEvent) error
-	grpc.ServerStream
-}
-
-type gameMachineServiceSubscribeEventsServer struct {
-	grpc.ServerStream
-}
-
-func (x *gameMachineServiceSubscribeEventsServer) Send(m *GameEvent) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-// GameMachineService_ServiceDesc is the grpc.ServiceDesc for GameMachineService service.
-// It's only intended for direct use with grpc.RegisterService,
-// and not to be introspected or modified (even as a copy)
-var GameMachineService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "colorgame.GameMachineService",
-	HandlerType: (*GameMachineServiceServer)(nil),
-	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "RecordBet",
-			Handler:    _GameMachineService_RecordBet_Handler,
-		},
-		{
-			MethodName: "GetCurrentRound",
-			Handler:    _GameMachineService_GetCurrentRound_Handler,
-		},
-	},
-	Streams: []grpc.StreamDesc{
-		{
-			StreamName:    "SubscribeEvents",
-			Handler:       _GameMachineService_SubscribeEvents_Handler,
-			ServerStreams: true,
-		},
-	},
 	Metadata: "shared/proto/colorgame/colorgame.proto",
 }

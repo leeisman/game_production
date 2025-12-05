@@ -18,36 +18,36 @@ import (
 // Handler implements the gRPC server for GS
 type Handler struct {
 	pb.UnimplementedColorGameServiceServer
-	playerUC *usecase.PlayerUseCase
+	gsUC *usecase.GSUseCase
 }
 
 // NewHandler creates a new gRPC handler
-func NewHandler(playerUC *usecase.PlayerUseCase) *Handler {
+func NewHandler(gsUC *usecase.GSUseCase) *Handler {
 	return &Handler{
-		playerUC: playerUC,
+		gsUC: gsUC,
 	}
 }
 
 // PlaceBet implements the PlaceBet RPC
-func (h *Handler) PlaceBet(ctx context.Context, req *pb.PlaceBetReq) (*pb.PlaceBetRsp, error) {
-	bet, err := h.playerUC.PlaceBet(ctx, req.UserId, domain.Color(req.Color), req.Amount)
+func (h *Handler) PlaceBet(ctx context.Context, req *pb.ColorGamePlaceBetReq) (*pb.ColorGamePlaceBetRsp, error) {
+	bet, err := h.gsUC.PlaceBet(ctx, req.UserId, domain.Color(req.Color), req.Amount)
 	if err != nil {
-		return &pb.PlaceBetRsp{
+		return &pb.ColorGamePlaceBetRsp{
 			ErrorCode: pbCommon.ErrorCode_INTERNAL_ERROR, // TODO: Map specific errors
 			Error:     err.Error(),
 		}, nil
 	}
-	return &pb.PlaceBetRsp{
+	return &pb.ColorGamePlaceBetRsp{
 		ErrorCode: pbCommon.ErrorCode_SUCCESS,
 		BetId:     bet.BetID,
 	}, nil
 }
 
 // GetState implements the GetState RPC
-func (h *Handler) GetState(ctx context.Context, req *pb.GetStateReq) (*pb.GetStateRsp, error) {
-	state, err := h.playerUC.GetCurrentRound(ctx, req.UserId)
+func (h *Handler) GetState(ctx context.Context, req *pb.ColorGameGetStateReq) (*pb.ColorGameGetStateRsp, error) {
+	state, err := h.gsUC.GetCurrentRound(ctx, req.UserId)
 	if err != nil {
-		return &pb.GetStateRsp{
+		return &pb.ColorGameGetStateRsp{
 			ErrorCode: pbCommon.ErrorCode_INTERNAL_ERROR,
 		}, nil
 	}
@@ -55,25 +55,25 @@ func (h *Handler) GetState(ctx context.Context, req *pb.GetStateReq) (*pb.GetSta
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		logger.ErrorGlobal().Err(err).Msg("Failed to marshal state")
-		return &pb.GetStateRsp{
+		return &pb.ColorGameGetStateRsp{
 			ErrorCode: pbCommon.ErrorCode_INTERNAL_ERROR,
 		}, nil
 	}
 
-	return &pb.GetStateRsp{
+	return &pb.ColorGameGetStateRsp{
 		ErrorCode: pbCommon.ErrorCode_SUCCESS,
 		StateJson: stateJSON,
 	}, nil
 }
 
 // StartServer starts the gRPC server
-func StartServer(address string, playerUC *usecase.PlayerUseCase) {
+func StartServer(address string, gsUC *usecase.GSUseCase) {
 	lis, err := net.Listen("tcp", address)
 	if err != nil {
 		logger.FatalGlobal().Err(err).Msg("failed to listen")
 	}
 	s := grpc.NewServer()
-	pb.RegisterColorGameServiceServer(s, NewHandler(playerUC))
+	pb.RegisterColorGameServiceServer(s, NewHandler(gsUC))
 
 	// Enable reflection for debugging
 	reflection.Register(s)

@@ -19,13 +19,15 @@ import (
 func TestGatewayFlow(t *testing.T) {
 	// 1. Setup GMS & GS (Needed to test the full flow)
 	stateMachine := gmsMachine.NewStateMachine()
+	stateMachine.WaitDuration = 50 * time.Millisecond
 	stateMachine.BettingDuration = 500 * time.Millisecond
 	stateMachine.DrawingDuration = 100 * time.Millisecond
 	stateMachine.ResultDuration = 100 * time.Millisecond
+	stateMachine.RestDuration = 50 * time.Millisecond
 
 	broadcaster := &MockBroadcaster{}
 	gameRoundRepo := &MockGameRoundRepository{}
-	roundUC := gmsUC.NewRoundUseCase(stateMachine, broadcaster, broadcaster, gameRoundRepo)
+	roundUC := gmsUC.NewGMSUseCase(stateMachine, broadcaster, broadcaster, gameRoundRepo)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -39,7 +41,7 @@ func TestGatewayFlow(t *testing.T) {
 	walletSvc := wallet.NewMockService()
 
 	gsBroadcaster := &MockBroadcaster{}
-	playerUC := gsUC.NewPlayerUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, gsBroadcaster)
+	playerUC := gsUC.NewGSUseCase(betRepo, betOrderRepo, gmsHandler, walletSvc, gsBroadcaster)
 	gsHandler := gsLocal.NewHandler(playerUC)
 
 	// 2. Setup Gateway
@@ -53,9 +55,11 @@ func TestGatewayFlow(t *testing.T) {
 
 	req := map[string]interface{}{
 		"game":    "color_game",
-		"command": "place_bet",
-		"color":   "green",
-		"amount":  50,
+		"command": "ColorGamePlaceBetREQ",
+		"data": map[string]interface{}{
+			"color":  "green",
+			"amount": 50,
+		},
 	}
 	reqJSON, _ := json.Marshal(req)
 
@@ -70,11 +74,22 @@ func TestGatewayFlow(t *testing.T) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if resp["type"] != "bet_placed" {
-		t.Errorf("Expected type bet_placed, got %v", resp["type"])
+	if resp["game_code"] != "color_game" {
+		t.Errorf("Expected game_code color_game, got %v", resp["game_code"])
 	}
-	if resp["success"] != true {
-		t.Errorf("Expected success true, got %v", resp["success"])
+
+	if resp["command"] != "ColorGamePlaceBetRSP" {
+		t.Errorf("Expected command ColorGamePlaceBetRSP, got %v", resp["command"])
+	}
+
+	data, ok := resp["data"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Response data is not a map")
+	}
+
+	// error_code should be 0 (SUCCESS)
+	if errorCode, ok := data["error_code"].(float64); !ok || errorCode != 0 {
+		t.Errorf("Expected error_code 0 (SUCCESS), got %v (error: %v)", data["error_code"], data["error"])
 	}
 
 	t.Logf("Gateway Response: %s", string(respJSON))

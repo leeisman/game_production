@@ -13,24 +13,24 @@ import (
 	pbColorGame "github.com/frankieli/game_product/shared/proto/colorgame"
 )
 
-// PlayerUseCase handles player betting logic
-type PlayerUseCase struct {
+// GSUseCase handles player betting logic
+type GSUseCase struct {
 	betRepo            domain.BetRepository
 	betOrderRepo       domain.BetOrderRepository
 	gmsService         colorgame.GMSService
 	walletSvc          service.WalletService
-	gatewayBroadcaster domain.Broadcaster
+	gatewayBroadcaster service.GatewayService
 }
 
-// NewPlayerUseCase creates a new player use case
-func NewPlayerUseCase(
+// NewGSUseCase creates a new player use case
+func NewGSUseCase(
 	betRepo domain.BetRepository,
 	betOrderRepo domain.BetOrderRepository,
 	gmsService colorgame.GMSService,
 	walletSvc service.WalletService,
-	gatewayBroadcaster domain.Broadcaster,
-) *PlayerUseCase {
-	return &PlayerUseCase{
+	gatewayBroadcaster service.GatewayService,
+) *GSUseCase {
+	return &GSUseCase{
 		betRepo:            betRepo,
 		betOrderRepo:       betOrderRepo,
 		gmsService:         gmsService,
@@ -40,7 +40,7 @@ func NewPlayerUseCase(
 }
 
 // PlaceBet handles a player placing a bet
-func (uc *PlayerUseCase) PlaceBet(ctx context.Context, userID int64, color domain.Color, amount int64) (*domain.Bet, error) {
+func (uc *GSUseCase) PlaceBet(ctx context.Context, userID int64, color domain.Color, amount int64) (*domain.Bet, error) {
 	// Inject UserID into context logger
 	ctx = logger.WithFields(ctx, map[string]interface{}{
 		"user_id": userID,
@@ -52,7 +52,7 @@ func (uc *PlayerUseCase) PlaceBet(ctx context.Context, userID int64, color domai
 		Msg("下注请求开始")
 
 	// 1. Get current round from GMS
-	roundRsp, err := uc.gmsService.GetCurrentRound(ctx, &pbColorGame.GetCurrentRoundReq{})
+	roundRsp, err := uc.gmsService.GetCurrentRound(ctx, &pbColorGame.ColorGameGetCurrentRoundReq{})
 	if err != nil {
 		logger.Error(ctx).
 			Err(err).
@@ -92,7 +92,7 @@ func (uc *PlayerUseCase) PlaceBet(ctx context.Context, userID int64, color domai
 		Msg("钱包扣款成功")
 
 	// 4. Record bet in GMS
-	_, err = uc.gmsService.RecordBet(ctx, &pbColorGame.RecordBetReq{
+	_, err = uc.gmsService.RecordBet(ctx, &pbColorGame.ColorGameRecordBetReq{
 		RoundId: roundRsp.RoundId,
 		UserId:  userID,
 		Color:   string(color),
@@ -152,8 +152,8 @@ func (uc *PlayerUseCase) PlaceBet(ctx context.Context, userID int64, color domai
 }
 
 // GetCurrentRound gets the current round info with player's bets
-func (uc *PlayerUseCase) GetCurrentRound(ctx context.Context, userID int64) (map[string]interface{}, error) {
-	roundRsp, err := uc.gmsService.GetCurrentRound(ctx, &pbColorGame.GetCurrentRoundReq{
+func (uc *GSUseCase) GetCurrentRound(ctx context.Context, userID int64) (map[string]interface{}, error) {
+	roundRsp, err := uc.gmsService.GetCurrentRound(ctx, &pbColorGame.ColorGameGetCurrentRoundReq{
 		UserId: userID,
 	})
 	if err != nil {
@@ -190,7 +190,8 @@ func (uc *PlayerUseCase) GetCurrentRound(ctx context.Context, userID int64) (map
 }
 
 // SettleRound processes settlement for a round
-func (uc *PlayerUseCase) SettleRound(ctx context.Context, roundID string, winningColor domain.Color) error {
+func (uc *GSUseCase) SettleRound(ctx context.Context, roundID string, winningColor domain.Color) error {
+	startTime := time.Now()
 	logger.Info(ctx).Str("round_id", roundID).Str("winning_color", string(winningColor)).Msg("Starting settlement")
 
 	// Batch processing configuration
@@ -261,16 +262,6 @@ func (uc *PlayerUseCase) SettleRound(ctx context.Context, roundID string, winnin
 	// Explicitly clear bets for Memory repo safety (idempotent for Redis)
 	_ = uc.betRepo.ClearBets(ctx, roundID)
 
-	// Broadcast settlement complete event
-	if uc.gatewayBroadcaster != nil {
-		uc.gatewayBroadcaster.Broadcast(&pbColorGame.GameEvent{
-			Type:      pbColorGame.EventType_EVENT_TYPE_SETTLEMENT_COMPLETE,
-			RoundId:   roundID,
-			Data:      fmt.Sprintf(`{"winning_color":"%s"}`, winningColor),
-			Timestamp: time.Now().Unix(),
-		})
-	}
-
 	// Log settlement summary
 	totalBets := len(allBetOrders)
 	totalPayout := int64(0)
@@ -291,13 +282,35 @@ func (uc *PlayerUseCase) SettleRound(ctx context.Context, roundID string, winnin
 		Int("win_count", winCount).
 		Int("lose_count", totalBets-winCount).
 		Int64("total_payout", totalPayout).
+		Dur("duration_ms", time.Since(startTime)).
 		Msg("Settlement completed successfully")
+
+	// Broadcast settlement result to all online players
+	// Note: Players who bet will receive TWO notifications:
+	//   1. Personal notification with their bet details (sent in processBatch)
+	//   2. This broadcast notification (for consistency with non-bettors)
+	// Frontend should handle deduplication by checking if bet_id is present
+	if uc.gatewayBroadcaster != nil {
+		uc.gatewayBroadcaster.Broadcast("color_game", &pbColorGame.ColorGameSettlementBRC{
+			RoundId:      roundID,
+			WinningColor: string(winningColor),
+			BetId:        "",
+			BetColor:     "",
+			BetAmount:    0,
+			WinAmount:    0,
+			IsWinner:     false,
+		})
+		logger.Debug(ctx).
+			Str("round_id", roundID).
+			Str("winning_color", string(winningColor)).
+			Msg("Broadcasted settlement result to all players")
+	}
 
 	return nil
 }
 
 // processBatch processes a batch of bet orders: write to DB, then handle wallet and notifications
-func (uc *PlayerUseCase) processBatch(ctx context.Context, roundID string, winningColor domain.Color, betOrders []*domain.BetOrder, bets []*domain.Bet, batchNum int) error {
+func (uc *GSUseCase) processBatch(ctx context.Context, roundID string, winningColor domain.Color, betOrders []*domain.BetOrder, bets []*domain.Bet, batchNum int) error {
 	// 1. Write batch to database
 	if uc.betOrderRepo != nil && len(betOrders) > 0 {
 		startTime := time.Now()
@@ -350,14 +363,14 @@ func (uc *PlayerUseCase) processBatch(ctx context.Context, roundID string, winni
 
 		// Only notify player if wallet operation succeeded (or if they lost)
 		if shouldNotify && uc.gatewayBroadcaster != nil {
-			data := fmt.Sprintf(`{"round_id":"%s","winning_color":"%s","bet_amount":%d,"win_amount":%d}`,
-				roundID, winningColor, bet.Amount, winAmount)
-
-			uc.gatewayBroadcaster.SendToUser(bet.UserID, &pbColorGame.GameEvent{
-				Type:      pbColorGame.EventType_EVENT_TYPE_SETTLEMENT,
-				RoundId:   roundID,
-				Data:      data,
-				Timestamp: time.Now().Unix(),
+			uc.gatewayBroadcaster.SendToUser(bet.UserID, "color_game", &pbColorGame.ColorGameSettlementBRC{
+				RoundId:      roundID,
+				WinningColor: string(winningColor),
+				BetId:        bet.BetID,
+				BetColor:     string(bet.Color),
+				BetAmount:    bet.Amount,
+				WinAmount:    winAmount,
+				IsWinner:     winAmount > 0,
 			})
 		}
 	}
