@@ -1,6 +1,6 @@
-# Game Machine Service (GMS)
+# Game Manager Service (GMS)
 
-GMS (Game Machine Service) 負責驅動遊戲的核心狀態與週期 (Round Loop)。它不處理玩家的下注邏輯，而是專注於維護 "現在是什麼階段" 以及 "開獎結果是什麼"。
+GMS (Game Manager Service) 負責驅動遊戲的核心狀態與週期 (Round Loop)，並統籌該回合計的聚合數據（如總下注數 calculation）。它不處理玩家的個人下注邏輯（那是 GS 的職責），而是專注於維護全局遊戲狀態。
 
 ## 1. 遊戲狀態機 (Game State Machine)
 
