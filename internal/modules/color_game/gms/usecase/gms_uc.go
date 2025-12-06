@@ -74,7 +74,7 @@ func (uc *GMSUseCase) handleGameEvent(event machine.GameEvent) {
 
 		// Broadcast BRC to gateway
 		if uc.gatewayBroadcaster != nil {
-			uc.gatewayBroadcaster.Broadcast("color_game", brc)
+			uc.gatewayBroadcaster.Broadcast(context.Background(), "color_game", brc)
 		}
 
 	default:
@@ -178,6 +178,19 @@ func (uc *GMSUseCase) GetCurrentRound(ctx context.Context) (*domain.Round, error
 		BettingEnd: roundView.BettingEnd,
 		LeftTime:   roundView.LeftTime,
 	}, nil
+}
+
+// RecordBet records a bet in GMS (called by GS)
+func (uc *GMSUseCase) RecordBet(ctx context.Context, roundID string, userID int64, color domain.Color, amount int64) error {
+	return uc.IncrementBetCount(ctx, roundID, userID, float64(amount))
+}
+
+// GetPlayerBets returns player bets for a specific round and user
+// Note: This is a placeholder - actual implementation would need a bet repository
+func (uc *GMSUseCase) GetPlayerBets(ctx context.Context, roundID string, userID int64) ([]domain.PlayerBet, error) {
+	// For now, return empty as we don't store individual bets in GMS
+	// This would need to be implemented if we want to show player's own bets
+	return []domain.PlayerBet{}, nil
 }
 
 // RegisterEventHandler registers an additional event handler

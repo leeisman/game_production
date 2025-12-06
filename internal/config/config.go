@@ -16,7 +16,11 @@ type MonolithConfig struct {
 func LoadMonolithConfig() *MonolithConfig {
 	userCfg := LoadUserConfig()
 	colorGameCfg := LoadColorGameConfig()
+
+	// Monolith uses same gateway port as microservices for consistency
 	gatewayCfg := LoadGatewayConfig()
+	// Use 8081 (same as microservices gateway)
+	gatewayCfg.Server.Port = getEnv("GATEWAY_PORT", "8081")
 
 	return &MonolithConfig{
 		User:      *userCfg,

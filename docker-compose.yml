@@ -51,6 +51,7 @@ services:
 
   # Nacos Service Discovery
   nacos:
+    platform: linux/amd64
     image: nacos/nacos-server:v2.2.3
     container_name: casino_nacos
     environment:

@@ -24,14 +24,14 @@ type MockBroadcaster struct {
 	events []proto.Message
 }
 
-func (m *MockBroadcaster) Broadcast(gameCode string, event proto.Message) {
+func (m *MockBroadcaster) Broadcast(ctx context.Context, gameCode string, event proto.Message) {
 	if m.events == nil {
 		m.events = make([]proto.Message, 0)
 	}
 	m.events = append(m.events, event)
 }
 
-func (m *MockBroadcaster) SendToUser(userID int64, gameCode string, message proto.Message) {
+func (m *MockBroadcaster) SendToUser(ctx context.Context, userID int64, gameCode string, message proto.Message) {
 	if m.events == nil {
 		m.events = make([]proto.Message, 0)
 	}

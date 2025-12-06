@@ -11,6 +11,9 @@ type Registry interface {
 	// GetService gets a healthy service instance address (host:port)
 	GetService(serviceName string) (string, error)
 
+	// GetServices gets all healthy service instance addresses
+	GetServices(serviceName string) ([]string, error)
+
 	// Close closes the registry client
 	Close() error
 }

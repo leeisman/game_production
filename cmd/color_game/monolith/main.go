@@ -181,41 +181,58 @@ func main() {
 	// Initialize HTTP Handler
 	gatewayHttpHandler := gatewayHttp.NewHandler(gatewayUC, wsManager, userSvc)
 
-	// 4. Setup HTTP Server
-	r := gin.New()
-	r.Use(gin.Recovery())
+	// 4. Setup HTTP Servers
 
-	// Add logger middleware (must be first to capture all requests)
-	r.Use(logger.GinMiddleware())
+	// Gateway Server (WebSocket) on 8081
+	gatewayRouter := gin.New()
+	gatewayRouter.Use(gin.Recovery())
+	gatewayRouter.Use(logger.GinMiddleware())
 
-	// API Routes
-	api := r.Group("/api")
-	{
-		// Let User module register its own routes
-		userHttpHandler.RegisterRoutes(api.Group("/users"))
-	}
-
-	// WebSocket Route
-	r.GET("/ws", func(c *gin.Context) {
+	gatewayRouter.GET("/ws", func(c *gin.Context) {
 		gatewayHttpHandler.HandleWebSocket(c.Writer, c.Request)
 	})
 
-	// 5. Start Server
-	port := cfg.Gateway.Server.Port
-	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: r,
+	// User HTTP Server (REST API) on 8082
+	userRouter := gin.New()
+	userRouter.Use(gin.Recovery())
+	userRouter.Use(logger.GinMiddleware())
+
+	api := userRouter.Group("/api")
+	{
+		userHttpHandler.RegisterRoutes(api.Group("/users"))
+	}
+
+	// 5. Start Servers
+	gatewayPort := cfg.Gateway.Server.Port // 8081
+	userPort := cfg.User.Server.HTTPPort   // 8082
+
+	gatewaySrv := &http.Server{
+		Addr:    ":" + gatewayPort,
+		Handler: gatewayRouter,
+	}
+
+	userSrv := &http.Server{
+		Addr:    ":" + userPort,
+		Handler: userRouter,
 	}
 
 	logger.InfoGlobal().
-		Str("port", port).
-		Str("ws_url", fmt.Sprintf("ws://localhost:%s/ws?token=YOUR_TOKEN", port)).
-		Str("api_url", fmt.Sprintf("http://localhost:%s/api", port)).
+		Str("gateway_port", gatewayPort).
+		Str("user_http_port", userPort).
+		Str("ws_url", fmt.Sprintf("ws://localhost:%s/ws?token=YOUR_TOKEN", gatewayPort)).
+		Str("user_api_url", fmt.Sprintf("http://localhost:%s/api/users", userPort)).
 		Msg("🚀 Color Game Monolith running")
 
+	// Start both servers concurrently
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.FatalGlobal().Err(err).Msg("Failed to start server")
+		if err := gatewaySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.FatalGlobal().Err(err).Msg("Gateway server failed")
+		}
+	}()
+
+	go func() {
+		if err := userSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.FatalGlobal().Err(err).Msg("User HTTP server failed")
 		}
 	}()
 
@@ -223,13 +240,18 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	logger.InfoGlobal().Msg("🛑 Shutting down server...")
+	logger.InfoGlobal().Msg("🛑 Shutting down servers...")
 
-	// 6.1 Stop HTTP Server first (stop accepting new requests)
+	// 6.1 Stop HTTP Servers first (stop accepting new requests)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		logger.FatalGlobal().Err(err).Msg("Server forced to shutdown")
+
+	if err := gatewaySrv.Shutdown(ctx); err != nil {
+		logger.ErrorGlobal().Err(err).Msg("Gateway server forced to shutdown")
+	}
+
+	if err := userSrv.Shutdown(ctx); err != nil {
+		logger.ErrorGlobal().Err(err).Msg("User HTTP server forced to shutdown")
 	}
 
 	// 6.2 Stop State Machine (wait for current round to finish)

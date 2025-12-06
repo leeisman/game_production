@@ -27,7 +27,7 @@ func NewTestBroadcaster() *TestBroadcaster {
 	}
 }
 
-func (m *TestBroadcaster) Broadcast(gameCode string, message proto.Message) {
+func (m *TestBroadcaster) Broadcast(ctx context.Context, gameCode string, message proto.Message) {
 	m.Messages <- message
 }
 
@@ -44,7 +44,7 @@ func (m *TestBroadcaster) GetState(ctx context.Context, req *pbColorGame.ColorGa
 	return &pbColorGame.ColorGameGetStateRsp{}, nil
 }
 
-func (m *TestBroadcaster) SendToUser(userID int64, gameCode string, message proto.Message) {
+func (m *TestBroadcaster) SendToUser(ctx context.Context, userID int64, gameCode string, message proto.Message) {
 	m.Messages <- message
 }
 

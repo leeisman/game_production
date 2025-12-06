@@ -2,6 +2,7 @@
 package local
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/frankieli/game_product/internal/modules/gateway/ws"
@@ -69,14 +70,14 @@ func (h *Handler) convertEvent(gameCode string, event proto.Message) []byte {
 	return nil
 }
 
-func (h *Handler) Broadcast(gameCode string, event proto.Message) {
+func (h *Handler) Broadcast(ctx context.Context, gameCode string, event proto.Message) {
 	msgBytes := h.convertEvent(gameCode, event)
 	if msgBytes != nil {
 		h.wsManager.Broadcast(msgBytes)
 	}
 }
 
-func (h *Handler) SendToUser(userID int64, gameCode string, event proto.Message) {
+func (h *Handler) SendToUser(ctx context.Context, userID int64, gameCode string, event proto.Message) {
 	msgBytes := h.convertEvent(gameCode, event)
 	if msgBytes != nil {
 		h.wsManager.SendToUser(userID, msgBytes)

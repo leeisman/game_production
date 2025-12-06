@@ -54,8 +54,8 @@ func TestGatewayFlow(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	req := map[string]interface{}{
-		"game":    "color_game",
-		"command": "ColorGamePlaceBetREQ",
+		"game_code": "color_game",
+		"command":   "ColorGamePlaceBetREQ",
 		"data": map[string]interface{}{
 			"color":  "green",
 			"amount": 50,

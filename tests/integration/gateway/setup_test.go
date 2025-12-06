@@ -18,8 +18,10 @@ func init() {
 
 type MockBroadcaster struct{}
 
-func (m *MockBroadcaster) Broadcast(gameCode string, message proto.Message)                {}
-func (m *MockBroadcaster) SendToUser(userID int64, gameCode string, message proto.Message) {}
+func (m *MockBroadcaster) Broadcast(ctx context.Context, gameCode string, message proto.Message) {}
+func (m *MockBroadcaster) SendToUser(ctx context.Context, userID int64, gameCode string, message proto.Message) {
+}
+
 func (m *MockBroadcaster) RoundResult(ctx context.Context, req *pbColorGame.ColorGameRoundResultReq) (*pbColorGame.ColorGameRoundResultRsp, error) {
 	return &pbColorGame.ColorGameRoundResultRsp{}, nil
 }

@@ -152,6 +152,13 @@ func (sm *StateMachine) Start(ctx context.Context) {
 	defer sm.shutdownWorkers()
 
 	for {
+		select {
+		case <-ctx.Done():
+			logger.Info(ctx).Msg("🛑 [GMS] Context Cancelled, Stopping State Machine")
+			return
+		default:
+		}
+
 		sm.mu.RLock()
 		stopping := sm.stopping
 		sm.mu.RUnlock()
@@ -171,8 +178,17 @@ func (sm *StateMachine) Start(ctx context.Context) {
 	}
 }
 
+// sleepWithContext sleeps for duration d, or until ctx is cancelled
+func sleepWithContext(ctx context.Context, d time.Duration) {
+	select {
+	case <-time.After(d):
+	case <-ctx.Done():
+	}
+}
+
 // runRound executes a single round
 func (sm *StateMachine) runRound(ctx context.Context) {
+	// ... (rest of the function using sleepWithContext)
 	sm.mu.Lock()
 	sm.roundCounter++
 	roundID := sm.generateRoundID()
@@ -192,7 +208,10 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 		BettingEndTimestamp: 0,
 	})
 
-	time.Sleep(sm.WaitDuration)
+	sleepWithContext(ctx, sm.WaitDuration)
+	if ctx.Err() != nil {
+		return
+	}
 
 	//--------------------------------------------
 	// Betting phase
@@ -217,7 +236,10 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 		BettingEndTimestamp: bettingEnd.Unix(),
 	})
 
-	time.Sleep(sm.BettingDuration)
+	sleepWithContext(ctx, sm.BettingDuration)
+	if ctx.Err() != nil {
+		return
+	}
 
 	//--------------------------------------------
 	// Drawing phase
@@ -243,7 +265,10 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 		BettingEndTimestamp: round.BettingEnd.Unix(),
 	})
 
-	time.Sleep(sm.DrawingDuration)
+	sleepWithContext(ctx, sm.DrawingDuration)
+	if ctx.Err() != nil {
+		return
+	}
 
 	//--------------------------------------------
 	// Result phase
@@ -267,7 +292,10 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 		BettingEndTimestamp: round.BettingEnd.Unix(),
 	})
 
-	time.Sleep(sm.ResultDuration)
+	sleepWithContext(ctx, sm.ResultDuration)
+	if ctx.Err() != nil {
+		return
+	}
 
 	//--------------------------------------------
 	// Round Ended phase (Rest)
@@ -288,7 +316,7 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 	sm.phaseEndTime = time.Now().Add(sm.RestDuration)
 	sm.mu.Unlock()
 
-	time.Sleep(sm.RestDuration)
+	sleepWithContext(ctx, sm.RestDuration)
 }
 
 // drawResult simulates drawing a result

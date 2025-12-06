@@ -29,11 +29,11 @@ func LoadColorGameConfig() *ColorGameConfig {
 	}
 
 	dbConfig := DatabaseConfig{
-		Host:     getEnv("COLORGAME_DB_HOST", "localhost"),
-		Port:     getEnv("COLORGAME_DB_PORT", "5432"),
-		User:     getEnv("COLORGAME_DB_USER", "postgres"),
-		Password: getEnv("COLORGAME_DB_PASSWORD", "postgres"),
-		Name:     getEnv("COLORGAME_DB_NAME", "colorgame"),
+		Host:     getEnv("DB_HOST", "localhost"),
+		Port:     getEnv("DB_PORT", "5432"),
+		User:     getEnv("DB_USER", "casino_user"),
+		Password: getEnv("DB_PASSWORD", "casino_pass"),
+		Name:     getEnv("DB_NAME", "casino_db"),
 	}
 
 	return &ColorGameConfig{

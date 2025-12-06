@@ -291,7 +291,7 @@ func (uc *GSUseCase) SettleRound(ctx context.Context, roundID string, winningCol
 	//   2. This broadcast notification (for consistency with non-bettors)
 	// Frontend should handle deduplication by checking if bet_id is present
 	if uc.gatewayBroadcaster != nil {
-		uc.gatewayBroadcaster.Broadcast("color_game", &pbColorGame.ColorGameSettlementBRC{
+		uc.gatewayBroadcaster.Broadcast(ctx, "color_game", &pbColorGame.ColorGameSettlementBRC{
 			RoundId:      roundID,
 			WinningColor: winningColor,
 			BetId:        "",
@@ -363,7 +363,7 @@ func (uc *GSUseCase) processBatch(ctx context.Context, roundID string, winningCo
 
 		// Only notify player if wallet operation succeeded (or if they lost)
 		if shouldNotify && uc.gatewayBroadcaster != nil {
-			uc.gatewayBroadcaster.SendToUser(bet.UserID, "color_game", &pbColorGame.ColorGameSettlementBRC{
+			uc.gatewayBroadcaster.SendToUser(ctx, bet.UserID, "color_game", &pbColorGame.ColorGameSettlementBRC{
 				RoundId:      roundID,
 				WinningColor: winningColor,
 				BetId:        bet.BetID,

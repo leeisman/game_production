@@ -20,6 +20,12 @@ type Round struct {
 	LeftTime   int64
 }
 
+// PlayerBet represents a player's bet in a round
+type PlayerBet struct {
+	Color  Color
+	Amount int64
+}
+
 // NewRound creates a new round
 func NewRound(roundID string) *Round {
 	return &Round{

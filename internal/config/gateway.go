@@ -32,7 +32,7 @@ func LoadGatewayConfig() *GatewayConfig {
 
 	return &GatewayConfig{
 		Server: ServerConfig{
-			Port: getEnv("GATEWAY_SERVER_PORT", "8081"),
+			Port: getEnv("GATEWAY_PORT", "8081"),
 			Name: "gateway-service",
 		},
 		WebSocket: WebSocketConfig{

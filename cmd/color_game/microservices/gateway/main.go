@@ -3,33 +3,34 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
-	"google.golang.org/protobuf/proto"
+	"google.golang.org/grpc"
 
 	"github.com/frankieli/game_product/internal/config"
-	colorgameGSLocal "github.com/frankieli/game_product/internal/modules/color_game/gs/adapter/local"
-	gsRedis "github.com/frankieli/game_product/internal/modules/color_game/gs/adapter/redis"
-	colorgameGSDomain "github.com/frankieli/game_product/internal/modules/color_game/gs/domain"
-	colorgameGSMemory "github.com/frankieli/game_product/internal/modules/color_game/gs/repository/memory"
-	colorgameGSUseCase "github.com/frankieli/game_product/internal/modules/color_game/gs/usecase"
+	gatewayGrpc "github.com/frankieli/game_product/internal/modules/gateway/adapter/grpc"
 	gatewayHttp "github.com/frankieli/game_product/internal/modules/gateway/adapter/http"
-	gatewayAdapter "github.com/frankieli/game_product/internal/modules/gateway/adapter/local"
 	gatewayUseCase "github.com/frankieli/game_product/internal/modules/gateway/usecase"
 	"github.com/frankieli/game_product/internal/modules/gateway/ws"
-	walletModule "github.com/frankieli/game_product/internal/modules/wallet"
-	grpcClient "github.com/frankieli/game_product/pkg/grpc_client"
+	grpcClient "github.com/frankieli/game_product/pkg/grpc_client/base"
+	colorGameClient "github.com/frankieli/game_product/pkg/grpc_client/color_game"
 
 	"github.com/frankieli/game_product/pkg/discovery"
 	"github.com/frankieli/game_product/pkg/logger"
 
-	pb "github.com/frankieli/game_product/shared/proto/colorgame"
+	pbGateway "github.com/frankieli/game_product/shared/proto/gateway"
 )
 
 func main() {
+	logger.Init(logger.Config{
+		Level:  "debug",
+		Format: "console",
+	})
+
 	logger.InfoGlobal().Msg("🌐 Starting Color Game Gateway (Microservices Mode)...")
 
 	// 1. Load Config
@@ -55,49 +56,75 @@ func main() {
 	logger.InfoGlobal().Msg("✅ Redis connected")
 
 	// 4. Initialize Unified gRPC Client (acting as User Service Client)
-	userClient := grpcClient.NewClient(registry)
+	baseClient := grpcClient.NewBaseClient(registry)
 	logger.InfoGlobal().Msg("✅ Unified gRPC Client initialized")
 
-	// 4. Initialize GMS Client (Redis)
-	// No gRPC connection needed for GMS anymore
-	gmsClientAdapter := gsRedis.NewGMSClient(rdb)
-	logger.InfoGlobal().Msg("✅ GMS Client (Redis) initialized")
+	// 4. Initialize ColorGame Client (for calling GS and GMS services)
+	cgClient, err := colorGameClient.NewClient(baseClient)
+	if err != nil {
+		logger.WarnGlobal().Err(err).Msg("Failed to create ColorGame client")
+	}
+	logger.InfoGlobal().Msg("✅ ColorGame Client initialized")
 
 	// 5. Initialize WebSocket Manager
 	wsManager := ws.NewManager()
 	go wsManager.Run()
 
-	// 6. Initialize Gateway UseCase
-	walletSvc := walletModule.NewMockService()
-
-	var betRepo colorgameGSDomain.BetRepository
-	// Note: Gateway config doesn't have RepoType yet, assuming memory for now or adding it.
-	betRepo = colorgameGSMemory.NewBetRepository()
-
-	// Gateway listening to GMS events (and forwarding to WS)
-	broadcaster := gatewayAdapter.NewHandler(wsManager)
-
-	// Placeholder for betOrderRepo and gmsService, as they are not defined in the original code
-	// and their types are not provided in the instruction.
-	// Assuming they would be defined elsewhere in a complete refactor.
-	var betOrderRepo colorgameGSDomain.BetOrderRepository // Assuming a type for betOrderRepo
-	gmsService := gmsClientAdapter                        // Assuming gmsService is the existing gmsClientAdapter
-	gsUseCase := colorgameGSUseCase.NewGSUseCase(betRepo, betOrderRepo, gmsService, walletSvc, broadcaster)
-	gsHandler := colorgameGSLocal.NewHandler(gsUseCase)
-
-	// 7. Initialize Gateway UseCase
-	gatewayUC := gatewayUseCase.NewGatewayUseCase(gsHandler)
+	// 6. Initialize Gateway UseCase (forwards requests to GS/GMS via gRPC)
+	gatewayUC := gatewayUseCase.NewGatewayUseCase(cgClient)
 	logger.InfoGlobal().Msg("✅ Gateway module initialized")
 
-	// 8. Subscribe to GMS events (Redis Pub/Sub)
-	go subscribeToGMSEvents(rdb, broadcaster, gsHandler)
+	// Note: In microservices mode, Gateway is a pure proxy:
+	// - Receives WebSocket connections from clients
+	// - Forwards game requests to GS service via gRPC
+	// - Receives broadcasts from GMS via gRPC and forwards to WebSocket clients
 
-	logger.InfoGlobal().Msg("✅ Color Game GS initialized")
+	// 7. Initialize HTTP Handler
+	httpHandler := gatewayHttp.NewHandler(gatewayUC, wsManager, cgClient)
 
-	// 9. Initialize HTTP Handler
-	httpHandler := gatewayHttp.NewHandler(gatewayUC, wsManager, userClient)
+	// 10. Start gRPC Server (for Broadcast and SendToUser from GMS/GS)
+	gatewayGrpcHandler := gatewayGrpc.NewHandler(wsManager)
 
-	// 10. Setup HTTP Server
+	// Use random port for gRPC
+	grpcLis, err := net.Listen("tcp", ":0")
+	if err != nil {
+		logger.FatalGlobal().Err(err).Msg("Failed to listen on random gRPC port")
+	}
+
+	grpcAddr := grpcLis.Addr().(*net.TCPAddr)
+	grpcPort := grpcAddr.Port
+	logger.InfoGlobal().Int("grpc_port", grpcPort).Msg("🚀 Gateway gRPC Service listening (Random Port)")
+
+	grpcServer := grpc.NewServer()
+	pbGateway.RegisterGatewayServiceServer(grpcServer, gatewayGrpcHandler)
+
+	go func() {
+		if err := grpcServer.Serve(grpcLis); err != nil {
+			logger.FatalGlobal().Err(err).Msg("Failed to serve gRPC")
+		}
+	}()
+
+	// Register Gateway gRPC service to Nacos
+	ip := discovery.GetOutboundIP()
+	gatewayGrpcServiceName := "gateway-service"
+
+	var grpcRegistered bool
+	for i := 0; i < 10; i++ {
+		err = registry.RegisterService(gatewayGrpcServiceName, ip, uint64(grpcPort), nil)
+		if err == nil {
+			logger.InfoGlobal().Str("service", gatewayGrpcServiceName).Str("ip", ip).Int("port", grpcPort).Msg("✅ Gateway gRPC registered to Nacos")
+			grpcRegistered = true
+			break
+		}
+		logger.WarnGlobal().Err(err).Int("attempt", i+1).Msg("Failed to register Gateway gRPC, retrying...")
+		time.Sleep(2 * time.Second)
+	}
+
+	if !grpcRegistered {
+		logger.ErrorGlobal().Msg("Failed to register Gateway gRPC to Nacos after retries")
+	}
+
+	// 11. Setup HTTP Server
 	r := gin.Default()
 	r.Use(logger.GinMiddleware())
 
@@ -105,51 +132,17 @@ func main() {
 		httpHandler.HandleWebSocket(c.Writer, c.Request)
 	})
 
-	// 11. Start Server
+	// 12. Start HTTP/WebSocket Server
 	port := cfg.Server.Port
 	logger.InfoGlobal().
 		Str("port", port).
 		Str("ws_url", fmt.Sprintf("ws://localhost:%s/ws?token=YOUR_TOKEN", port)).
-		Msg("🚀 Gateway running")
+		Msg("🚀 Gateway HTTP/WebSocket running")
 
 	if err := r.Run(":" + port); err != nil {
 		logger.FatalGlobal().Err(err).Msg("Failed to start server")
 	}
 }
 
-// subscribeToGMSEvents subscribes to GMS event stream (Redis) and broadcasts to WebSocket clients AND GS
-func subscribeToGMSEvents(rdb *redis.Client, broadcaster *gatewayAdapter.Handler, gsHandler *colorgameGSLocal.Handler) {
-	logger.InfoGlobal().Msg("📡 Subscribing to GMS events (Redis)...")
-
-	pubsub := rdb.Subscribe(context.Background(), "color_game:events")
-	defer pubsub.Close()
-
-	// Wait for subscription to be created
-	_, err := pubsub.Receive(context.Background())
-	if err != nil {
-		logger.FatalGlobal().Err(err).Msg("Failed to subscribe to Redis channel")
-	}
-
-	ch := pubsub.Channel()
-	for msg := range ch {
-		// Try ColorGameRoundStateBRC
-		var brc pb.ColorGameRoundStateBRC
-		if err := proto.Unmarshal([]byte(msg.Payload), &brc); err == nil {
-			broadcaster.Broadcast("color_game", &brc)
-			logger.InfoGlobal().Str("state", brc.State.String()).Msg("Broadcasting GMS event (BRC)")
-			continue
-		}
-
-		// Try ColorGameRoundResultReq
-		var req pb.ColorGameRoundResultReq
-		if err := proto.Unmarshal([]byte(msg.Payload), &req); err == nil {
-			// To GS (for Settlement)
-			ctx := context.Background()
-			_, _ = gsHandler.RoundResult(ctx, &req)
-			logger.InfoGlobal().Str("round_id", req.RoundId).Msg("Forwarding RoundResult to GS")
-			continue
-		}
-
-		logger.ErrorGlobal().Msg("Failed to unmarshal event from Redis (unknown type)")
-	}
-}
+// Note: subscribeToGMSEvents removed in microservices mode
+// GMS broadcasts directly via gRPC to Gateway's Broadcast RPC handler

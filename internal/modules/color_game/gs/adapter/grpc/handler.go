@@ -4,15 +4,10 @@ package grpc
 import (
 	"context"
 	"encoding/json"
-	"net"
-
-	"github.com/frankieli/game_product/internal/modules/color_game/gs/domain"
 	"github.com/frankieli/game_product/internal/modules/color_game/gs/usecase"
 	"github.com/frankieli/game_product/pkg/logger"
 	pb "github.com/frankieli/game_product/shared/proto/colorgame"
 	pbCommon "github.com/frankieli/game_product/shared/proto/common"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
 )
 
 // Handler implements the gRPC server for GS
@@ -30,7 +25,7 @@ func NewHandler(gsUC *usecase.GSUseCase) *Handler {
 
 // PlaceBet implements the PlaceBet RPC
 func (h *Handler) PlaceBet(ctx context.Context, req *pb.ColorGamePlaceBetReq) (*pb.ColorGamePlaceBetRsp, error) {
-	bet, err := h.gsUC.PlaceBet(ctx, req.UserId, domain.Color(req.Color), req.Amount)
+	bet, err := h.gsUC.PlaceBet(ctx, req.UserId, req.Color, req.Amount)
 	if err != nil {
 		return &pb.ColorGamePlaceBetRsp{
 			ErrorCode: pbCommon.ErrorCode_INTERNAL_ERROR, // TODO: Map specific errors
@@ -75,14 +70,10 @@ func (h *Handler) RoundResult(ctx context.Context, req *pb.ColorGameRoundResultR
 	// However, the gRPC handler is an adapter for incoming requests.
 	// The RoundResult is a notification from GMS.
 
-	// Parse result data
-	color := domain.Color(req.Result)
-
 	// Run settlement asynchronously
 	// Note: In a real gRPC handler, we might want to return immediately.
 	go func() {
-		bgCtx := context.Background()
-		if err := h.gsUC.SettleRound(bgCtx, req.RoundId, color); err != nil {
+		if err := h.gsUC.SettleRound(ctx, req.RoundId, req.Result); err != nil {
 			logger.ErrorGlobal().Err(err).Str("round_id", req.RoundId).Msg("Settlement failed")
 		}
 	}()
@@ -90,22 +81,4 @@ func (h *Handler) RoundResult(ctx context.Context, req *pb.ColorGameRoundResultR
 	return &pb.ColorGameRoundResultRsp{
 		ErrorCode: pbCommon.ErrorCode_SUCCESS,
 	}, nil
-}
-
-// StartServer starts the gRPC server
-func StartServer(address string, gsUC *usecase.GSUseCase) {
-	lis, err := net.Listen("tcp", address)
-	if err != nil {
-		logger.FatalGlobal().Err(err).Msg("failed to listen")
-	}
-	s := grpc.NewServer()
-	pb.RegisterColorGameGSServiceServer(s, NewHandler(gsUC))
-
-	// Enable reflection for debugging
-	reflection.Register(s)
-
-	logger.InfoGlobal().Str("address", address).Msg("GS gRPC server listening")
-	if err := s.Serve(lis); err != nil {
-		logger.FatalGlobal().Err(err).Msg("failed to serve gRPC")
-	}
 }

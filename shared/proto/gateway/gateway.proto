@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package gateway;
+
+option go_package = "github.com/frankieli/game_product/shared/proto/gateway";
+
+import "shared/proto/common/common.proto";
+import "google/protobuf/any.proto";
+
+// Gateway Service
+service GatewayService {
+  // Broadcast broadcasts a message to all users in a specific game
+  rpc Broadcast(BroadcastReq) returns (BroadcastRsp);
+  
+  // SendToUser sends a message to a specific user
+  rpc SendToUser(SendToUserReq) returns (SendToUserRsp);
+}
+
+message BroadcastReq {
+  string game_code = 1;
+  google.protobuf.Any event = 2; // Dynamic payload (e.g., ColorGameRoundStateBRC)
+}
+
+message BroadcastRsp {
+  common.ErrorCode error_code = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+message SendToUserReq {
+  int64 user_id = 1;
+  string game_code = 2;
+  google.protobuf.Any event = 3;
+}
+
+message SendToUserRsp {
+  common.ErrorCode error_code = 1;
+  bool success = 2;
+  string error = 3;
+}

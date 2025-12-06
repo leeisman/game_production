@@ -1,115 +1,98 @@
-# System Architecture & Design Principles (2025-12-06)
+# System Architecture & Design Principles (2025-12-06 Update)
 
-This document is the **Single Source of Truth (SSOT)** for AI agents to understand the Game Product's architecture, design philosophy, and operational context. It consolidates previous evolution notes, design principles, and vision into one cohesive guide.
+This document is the **Single Source of Truth (SSOT)** for AI agents to understand the Game Product's architecture, design philosophy, and operational context.
 
 ---
 
 ## 1. Project Vision: Staff Engineer Portfolio
 
 This project is built to demonstrate **Staff Engineer** capabilities, focusing on:
-*   **Cost Efficiency**: Optimizing resource usage (e.g., Worker Pools, Batch Processing) to minimize infrastructure costs.
-*   **Performance**: Handling C10K+ concurrency with low latency using non-blocking I/O and optimized protocols.
-*   **Scalability**: A **Modular Monolith** architecture that allows for easy transition to Microservices without code rewrite.
+*   **Cost Efficiency**: Optimizing resource usage (e.g., Worker Pools, Batch Processing).
+*   **Performance**: Handling C10K+ concurrency with low latency.
+*   **Scalability**: A **Modular Monolith** architecture transitioning to **Microservices**.
 *   **Observability**: Structured logging (Zerolog), metrics hooks, and traceable request flows.
 
 ---
 
-## 2. Core Architectural Patterns
+## 2. Microservices Architecture (Current Focus)
 
-### 2.1 Modular Monolith First
-*   **Concept**: Use a single binary for simplicity (deployment, no RPC overhead) but maintain strict module boundaries.
-*   **Implementation**:
-    *   Modules (Gateway, User, GMS, GS) reside in `internal/modules`.
-    *   Inter-module communication uses **Interfaces** defined in `pkg/service`.
-    *   **Adapter Pattern**: Dependency Injection determines whether to use a `LocalAdapter` (direct call) or `GRPCAdapter` (remote call).
+### 2.1 Service Decomposition
+The system is split into distinct microservices:
+1.  **Gateway Service**: Pure proxy handling WebSocket connections and request forwarding. **State-less**.
+2.  **Game Management Service (GMS)**: Runs the game loop state machine. **State-ful**.
+3.  **Game Service (GS)**: Handles betting logic, settlement, and wallet interactions.
+4.  **User Service**: Handles user identity and wallet balance (currently Shared/Monolith).
 
-### 2.2 Clean Architecture (DDD)
-We strictly follow dependencies: `Adapter -> UseCase -> Domain`.
-*   **Domain**: Pure business entities and interface definitions. No external deps.
-*   **UseCase**: Business orchestration. Depends only on Domain interfaces.
-*   **Adapter (Handler/Repo)**: Implementation of interfaces. Connects to the outside world (HTTP, DB, Redis).
-    *   *Naming Convention*: All adapters must be named `Handler` (e.g., `local/handler.go`).
+### 2.2 Event Broadcasting Architecture (Revised)
 
-### 2.3 Concurrency Model
-*   **Worker Pools**: Used for high-frequency async tasks (e.g., GMS broadcasting) to bound resource usage and prevent OOM.
-    *   *Observation*: Always include a **Fallback Mechanism** (spawn goroutine) if the pool is full to ensure critical events aren't lost.
-*   **Batch Processing**: High-volume database writes (e.g., Settlement) are batched (chunk size: 500) to reduce I/O pressure.
-*   **Non-Blocking I/O**: Critical paths (WebSocket pumps) use non-blocking select and buffered channels.
+**CRITICAL: NO REDIS PUB/SUB IS USED.**
+
+We use a **gRPC Fan-out** pattern for delivering game state changes to clients:
+
+1.  **Source**: GMS State Machine transitions.
+2.  **Discovery**: GMS uses `BaseClient` to discover **ALL** healthy `gateway-service` instances from Nacos.
+3.  **Transport**: GMS calls `Broadcast` gRPC method on each Gateway instance.
+4.  **Transformation (Gateway)**:
+    *   Gateway receives `Any` protobuf message.
+    *   **Crucial Step**: Gateway `convertEvent` method unmarshals `Any` into specific types (`ColorGameRoundStateBRC`, etc.).
+    *   Transformed into JSON format expected by frontend: `{"command": "...", "data": {...}}`.
+5.  **Delivery**: Gateway pushes JSON to connected WebSocket clients.
+
+### 2.3 Service Discovery & Routing
+
+*   **Registry**: Alibaba Nacos.
+*   **Mechanism**: Client-side load balancing with **TTL Caching**.
+    *   Clients cache service addresses for **10 seconds**.
+    *   If cache expires, the next call fetches fresh addresses from Nacos.
+    *   This ensures new instances are discovered within 10s without overloading Nacos.
+*   **Ports**:
+    *   Gateway WS: `8081`
+    *   User API: `8082`
+    *   gRPC Services: Random ports (registered to Nacos).
+
+### 2.4 Graceful Shutdown Strategy
+
+To ensure zero downtime and data integrity during deployments:
+
+*   **GMS Shutdown Sequence**:
+    1.  Receive `SIGINT`/`SIGTERM`.
+    2.  `cancel()` context to immediately interrupt State Machine sleeps/waits.
+    3.  Call `stateMachine.Stop()` to set stopping flag.
+    4.  Call `grpcServer.GracefulStop()` with a **5-second timeout**. If it hangs, force stop.
+    5.  Deregister from Nacos.
 
 ---
 
-## 3. Module Communication & Contracts
+## 3. Core Architectural Patterns
 
-### 3.1 Interface Location
-*   **Internal**: `domain/` (e.g., `BetRepository` used by `GSUseCase`).
-*   **External**: `pkg/service/` (e.g., `GMSService` used by `GSUseCase` to call `GMS`).
+### 3.1 Modular Monolith vs. Microservices
+*   The codebase supports **both** modes.
+*   **Monolith**: Uses `LocalAdapter` for direct method calls.
+*   **Microservices**: Uses `GRPCAdapter` (via `BaseClient`) for remote calls.
+*   **Gateway**: In microservices mode, it is stripped of all business logic (GS/GMS), acting purely as a router.
 
-### 3.2 GMS & GS Interaction
-*   **Bidirectional Dependency**:
-    *   **GS -> GMS**: `GMSService.GetCurrentRound` (On-Demand Query for state validation).
-    *   **GMS -> GS**: `ColorGameGSService.RoundResult` (RPC Push for settlement trigger).
-*   **State Machine**:
-    *   GMS drives the game loop.
-    *   Broadcasts events via `pkg/service.GatewayService`.
+### 3.2 Testing & Mocks
+*   **Mock Wallet**: Currently, `GS` uses a Mock Wallet Service for testing to isolate dependencies.
+*   **OPS Tool**: Located in `cmd/ops`, used for manual gRPC testing and system monitoring.
 
 ---
 
 ## 4. Development Standards
 
 ### 4.1 Logging
-*   **Library**: `pkg/logger` (Zerolog wrapper).
-*   **Rule**: Always pass `ctx` to simple logging calls to propagate `request_id`.
-*   **Performance**: Use `SmartWriter` for async buffered writing in production.
+*   **Library**: `pkg/logger` (Zerolog).
+*   **Rule**: Always pass `ctx` to propagate `request_id`.
 
 ### 4.2 Protobuf Strategy
-*   **SSOT**: All APIs and Models defined in `shared/proto`.
-*   **Naming**: `*Req` (Request), `*Rsp` (Response), `*BRC` (Broadcast).
-*   **Migration**: When changing proto, run `./scripts/gen_proto.sh` (or equivalent) and update all adapters.
-
-### 4.3 Testing
-*   **Location**: `tests/` for integration tests.
-*   **Tool**: `cmd/color_game/test_robot` for end-to-end load testing.
+*   **SSOT**: `shared/proto`.
+*   **Naming**: `*Req`, `*Rsp`, `*BRC`.
+*   **Any Type**: Used for generic Broadcast/SendToUser payloads. Must be unmarshaled by the receiver (Gateway) before sending to WS.
 
 ---
 
-## 5. Project Structure & Navigation
+## 5. Directory Structure Navigation
 
-How to navigate the codebase:
-
-### 5.1 Root Directories
-*   `cmd/`: **Entry Points**.
-    *   `monolith/`: The main executable for the Modular Monolith (wires everything together).
-    *   `microservices/`: Individual entry points for distributed deployment.
-*   `internal/modules/`: **Business Logic**. Contains `color_game` (GMS/GS), `gateway`, `user`.
-*   `pkg/`: **Public Shared**.
-    *   `service/`: **External Contracts** (Interfaces) for module communication.
-    *   `logger/`, `utils/`: Common utilities.
-*   `shared/proto/`: **API Definitions**. The Single Source of Truth for all data structures and RPC methods.
-
-### 5.2 Module Layout (Standardized)
-Every module inside `internal/modules/` follows this exact structure:
-```text
-internal/modules/<module_name>/
-├── domain/       # [Pure] Structs, Repository Interfaces, Errors
-├── usecase/      # [Logic] Business Flow, State Management (Depends on Domain)
-└── adapter/      # [Glue]  Implementation of Interfaces
-    ├── http/     # Gin Handlers
-    ├── local/    # In-Memory Service Implementation (for Monolith)
-    └── repository/ # DB Implementations (Postgres/Redis)
-```
-
----
-
-## 6. Current Roadmap (Status: 2025-12-06)
-
-*   [x] **Refactoring**: Documentation modularization (GMS, GS, Monolith READMEs).
-*   [x] **Resilience**: GMS Worker Pool with Fallback.
-*   [x] **Protocol**: Unified WebSocket Protocol in Gateway.
-*   [ ] **Optimization**: Memory profiling for struct alignment.
-*   [ ] **Feature**: Adaptive Throttling for Gateway.
-*   [ ] **Docs**: Architecture Decision Records (ADRs).
-
----
-
-**Note to AI Agents**:
-When modifying this codebase, **always verify** if your changes align with the "Modular Monolith" boundary. Do not import `internal/modules/A` directly into `internal/modules/B`. Use `pkg/service` interfaces.
+*   `cmd/color_game/microservices/`: Entry points for Gateway, GMS, GS.
+*   `internal/modules/gateway/adapter/grpc/`: **Gateway gRPC Handler** (Critical for Broadcast transformation).
+*   `pkg/grpc_client/base/`: **BaseClient** (Service Discovery, Connection Pool, TTL Cache).
+*   `internal/modules/color_game/gms/machine/`: **State Machine** logic.

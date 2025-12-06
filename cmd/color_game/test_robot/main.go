@@ -21,7 +21,8 @@ import (
 
 // Config holds the robot configuration
 type Config struct {
-	Host      string
+	UserHost  string // User API host (for register/login)
+	WSHost    string // WebSocket host (for game)
 	UserCount int
 	BetMin    int
 	BetMax    int
@@ -30,7 +31,8 @@ type Config struct {
 // Robot represents a simulated player
 type Robot struct {
 	ID       int
-	Host     string
+	UserHost string // User API host
+	WSHost   string // WebSocket host
 	Username string
 	Password string
 	Token    string
@@ -61,13 +63,15 @@ type GameEvent struct {
 
 func main() {
 	// Parse command line arguments
-	host := flag.String("host", "localhost:8081", "Server host address")
+	userHost := flag.String("user-host", "localhost:8082", "User API host address (for register/login)")
+	wsHost := flag.String("ws-host", "localhost:8081", "WebSocket host address (for game)")
 	users := flag.Int("users", 4510, "Number of concurrent users")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	flag.Parse()
 
 	config := Config{
-		Host:      *host,
+		UserHost:  *userHost,
+		WSHost:    *wsHost,
 		UserCount: *users,
 		BetMin:    10,
 		BetMax:    100,
@@ -83,7 +87,8 @@ func main() {
 	ctx := context.Background()
 	logger.Info(ctx).
 		Int("users", config.UserCount).
-		Str("host", config.Host).
+		Str("user_host", config.UserHost).
+		Str("ws_host", config.WSHost).
 		Msg("🤖 Starting Test Robot")
 
 	var wg sync.WaitGroup
@@ -94,7 +99,7 @@ func main() {
 		time.Sleep(20 * time.Millisecond)
 		go func(id int) {
 			defer wg.Done()
-			robot := NewRobot(id, config.Host)
+			robot := NewRobot(id, config.UserHost, config.WSHost)
 			if err := robot.Run(); err != nil {
 				logger.Error(ctx).Int("robot_id", id).Err(err).Msg("Robot failed")
 			}
@@ -109,10 +114,11 @@ func main() {
 	logger.Info(ctx).Msg("🛑 Stopping robots...")
 }
 
-func NewRobot(id int, host string) *Robot {
+func NewRobot(id int, userHost, wsHost string) *Robot {
 	return &Robot{
 		ID:       id,
-		Host:     host,
+		UserHost: userHost,
+		WSHost:   wsHost,
 		Username: fmt.Sprintf("robot_user_%d", id), // Fixed username for reuse
 		Password: "password123",
 		ctx:      context.Background(),
@@ -185,7 +191,7 @@ func (r *Robot) Register() error {
 			logger.Warn(r.ctx).Int("robot_id", r.ID).Int("retry", i).Msg("Retrying registration...")
 		}
 
-		url := fmt.Sprintf("http://%s/api/users/register", r.Host)
+		url := fmt.Sprintf("http://%s/api/users/register", r.UserHost)
 		body := map[string]string{
 			"username": r.Username,
 			"password": r.Password,
@@ -206,21 +212,29 @@ func (r *Robot) Register() error {
 			continue
 		}
 
-		var result RegisterResponse
-		if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
-			err = decodeErr
+		// Check for non-200 status codes
+		if resp.StatusCode != http.StatusOK {
+			// Try to decode error response
+			var errorResp struct {
+				Error string `json:"error"`
+			}
+			if decodeErr := json.NewDecoder(resp.Body).Decode(&errorResp); decodeErr == nil {
+				err = fmt.Errorf("%s", errorResp.Error)
+				// If user already exists, proceed to login
+				if errorResp.Error == "username already exists" {
+					logger.Info(r.ctx).Int("robot_id", r.ID).Msg("User already exists, proceeding to login")
+					return nil
+				}
+			} else {
+				err = fmt.Errorf("HTTP %d", resp.StatusCode)
+			}
 			continue
 		}
 
-		if !result.Success && result.Error != "" {
-			err = fmt.Errorf("%s", result.Error)
-			// If user already exists, we can consider it a success (or handle login)
-			// But for now, let's just retry or fail.
-			// Actually, if user exists, we should probably just proceed to login.
-			if result.Error == "username already exists" {
-				logger.Info(r.ctx).Int("robot_id", r.ID).Msg("User already exists, proceeding to login")
-				return nil
-			}
+		// Success case - decode RegisterResponse
+		var result RegisterResponse
+		if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
+			err = decodeErr
 			continue
 		}
 
@@ -228,8 +242,8 @@ func (r *Robot) Register() error {
 		return nil
 	}
 	// Log final failure as Error
-	logger.Error(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Register failed after 5 retries")
-	return fmt.Errorf("register failed after 5 retries: %w", err)
+	logger.Error(r.ctx).Int("robot_id", r.ID).Err(err).Msg("Register failed after 20 retries")
+	return fmt.Errorf("register failed after 20 retries: %w", err)
 }
 
 func (r *Robot) Login() error {
@@ -242,7 +256,7 @@ func (r *Robot) Login() error {
 			logger.Warn(r.ctx).Int("robot_id", r.ID).Int("retry", i).Msg("Retrying login...")
 		}
 
-		url := fmt.Sprintf("http://%s/api/users/login", r.Host)
+		url := fmt.Sprintf("http://%s/api/users/login", r.UserHost)
 		body := map[string]string{
 			"username": r.Username,
 			"password": r.Password,
@@ -262,14 +276,24 @@ func (r *Robot) Login() error {
 			continue
 		}
 
-		var result LoginResponse
-		if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
-			err = decodeErr
+		// Check for non-200 status codes
+		if resp.StatusCode != http.StatusOK {
+			// Try to decode error response
+			var errorResp struct {
+				Error string `json:"error"`
+			}
+			if decodeErr := json.NewDecoder(resp.Body).Decode(&errorResp); decodeErr == nil {
+				err = fmt.Errorf("%s", errorResp.Error)
+			} else {
+				err = fmt.Errorf("HTTP %d", resp.StatusCode)
+			}
 			continue
 		}
 
-		if result.Token == "" {
-			err = fmt.Errorf("%s", result.Error)
+		// Success case - decode LoginResponse
+		var result LoginResponse
+		if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
+			err = decodeErr
 			continue
 		}
 
@@ -283,7 +307,7 @@ func (r *Robot) Login() error {
 }
 
 func (r *Robot) ConnectWS() error {
-	u := url.URL{Scheme: "ws", Host: r.Host, Path: "/ws", RawQuery: "token=" + r.Token}
+	u := url.URL{Scheme: "ws", Host: r.WSHost, Path: "/ws", RawQuery: "token=" + r.Token}
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
 		// Log connection failure as Error

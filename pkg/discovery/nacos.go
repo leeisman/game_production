@@ -100,6 +100,39 @@ func (nc *NacosClient) GetService(serviceName string) (string, error) {
 	return fmt.Sprintf("%s:%d", instance.Ip, instance.Port), nil
 }
 
+// GetServices gets all healthy service instance addresses from Nacos
+func (nc *NacosClient) GetServices(serviceName string) ([]string, error) {
+	instances, err := nc.client.SelectInstances(vo.SelectInstancesParam{
+		ServiceName: serviceName,
+		HealthyOnly: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get service instances: %w", err)
+	}
+
+	var addrs []string
+	for _, instance := range instances {
+		if instance.Enable && instance.Healthy {
+			addrs = append(addrs, fmt.Sprintf("%s:%d", instance.Ip, instance.Port))
+		}
+	}
+	return addrs, nil
+}
+
+// GetAllServicesList returns lists of all registered service names
+func (nc *NacosClient) GetAllServicesList() ([]string, error) {
+	// Query page 1 with 100 size (should cover most dev envs)
+	// For prod, loop might be needed
+	res, err := nc.client.GetAllServicesInfo(vo.GetAllServiceInfoParam{
+		PageNo:   1,
+		PageSize: 100,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list services: %w", err)
+	}
+	return res.Doms, nil
+}
+
 // Close closes the Nacos client
 func (nc *NacosClient) Close() error {
 	// Nacos SDK doesn't provide explicit close method

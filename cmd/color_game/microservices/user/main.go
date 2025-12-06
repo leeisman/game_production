@@ -5,8 +5,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
+	"time"
 
 	_ "github.com/lib/pq"
 	"google.golang.org/grpc"
@@ -58,40 +58,51 @@ func main() {
 	sessionRepo := userRepo.NewSessionRepository(db)
 	userUC := usecase.NewUserUseCase(userRepository, sessionRepo, cfg.JWT.Secret, cfg.JWT.Duration)
 
-	// 4. Start gRPC Server
-	grpcPort := cfg.Server.Port
-	lis, err := net.Listen("tcp", ":"+grpcPort)
+	// 4. Start gRPC Server (Always use Random Port as requested)
+	lis, err := net.Listen("tcp", ":0")
 	if err != nil {
-		logger.FatalGlobal().Str("port", grpcPort).Err(err).Msg("Failed to listen")
+		logger.FatalGlobal().Err(err).Msg("Failed to listen on random port")
 	}
+
+	// Capture actual port
+	addr := lis.Addr().(*net.TCPAddr)
+	actualPort := addr.Port
+	logger.InfoGlobal().Int("port", actualPort).Msg("🚀 User gRPC Service listening (Random Port)")
 
 	grpcServer := grpc.NewServer()
 	userGrpcHandler := userGrpc.NewHandler(userUC)
 	pb.RegisterUserServiceServer(grpcServer, userGrpcHandler)
 
 	go func() {
-		logger.InfoGlobal().Str("port", grpcPort).Msg("🚀 User gRPC Service running")
 		if err := grpcServer.Serve(lis); err != nil {
 			logger.FatalGlobal().Err(err).Msg("Failed to serve gRPC")
 		}
 	}()
 
-	// 5. Register to Nacos
+	// 5. Register to Nacos (with Retry)
 	ip := discovery.GetOutboundIP()
-	portInt, _ := strconv.Atoi(cfg.Server.Port)
 	nacosClient, err := discovery.NewNacosClient(cfg.Nacos.Host, cfg.Nacos.Port, cfg.Nacos.NamespaceID)
 	if err != nil {
 		logger.ErrorGlobal().Err(err).Msg("Failed to create Nacos client, skipping registration")
 	} else {
-		err = nacosClient.RegisterService(cfg.Server.Name, ip, uint64(portInt), nil)
-		if err != nil {
-			logger.ErrorGlobal().Err(err).Msg("Failed to register service")
-		} else {
-			logger.InfoGlobal().Str("service", cfg.Server.Name).Str("ip", ip).Msg("✅ Registered to Nacos")
-		}
+		// Retry registration
+		go func() {
+			maxRetries := 10
+			for i := 0; i < maxRetries; i++ {
+				// Register with ACTUAL port
+				err = nacosClient.RegisterService(cfg.Server.Name, ip, uint64(actualPort), nil)
+				if err == nil {
+					logger.InfoGlobal().Str("service", cfg.Server.Name).Str("ip", ip).Int("port", actualPort).Msg("✅ Registered to Nacos")
+					return
+				}
+				logger.WarnGlobal().Err(err).Msgf("Failed to register service (attempt %d/%d), retrying...", i+1, maxRetries)
+				time.Sleep(2 * time.Second)
+			}
+			logger.ErrorGlobal().Msg("❌ Failed to register service after retries")
+		}()
 	}
 
-	// 6. Start HTTP Server with Graceful Shutdown
+	// 6. Start HTTP Server
 	userHttpHandler := userHttp.NewHandler(userUC)
 	httpPort := cfg.Server.HTTPPort
 	httpServer := userHttp.NewServer(userHttpHandler, httpPort)
@@ -111,7 +122,7 @@ func main() {
 
 	// Deregister from Nacos
 	if nacosClient != nil {
-		nacosClient.DeregisterService(cfg.Server.Name, ip, uint64(portInt))
+		nacosClient.DeregisterService(cfg.Server.Name, ip, uint64(actualPort))
 		logger.InfoGlobal().Msg("✅ Deregistered from Nacos")
 	}
 }
