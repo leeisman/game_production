@@ -32,26 +32,35 @@ GS 監聽 GMS 的 `GAME_STATE_RESULT` 事件來觸發結算流程。
 
 GS並不直接依賴 GMS 的具體實作，而是通過 `pkg/service` 定義的介面進行交互。這確保了系統可以靈活地切換部署模式（單體或微服務）。
 
-### 3.1 依賴介面
-GS 依賴於 `pkg/service/color_game/gms.go` 中定義的 `GMSService` 介面：
+## 3. 與 GMS 的交互 (Interaction with GMS)
 
-```go
-type GMSService interface {
-    GetCurrentRound(ctx context.Context) (*domain.Round, error)
-    RegisterEventHandler(handler func(event domain.GameEvent))
-}
-```
+GS 與 GMS 的交互採用 **雙向服務依賴 (Bidirectional Service Dependency)** 模式，而非單純的觀察者註冊。這種設計確保了介面的強型別與 RPC 的兼容性。
 
-### 3.2 交互模式
-1.  **狀態監聽 (Observer)**:
-    *   GS 通過 `RegisterEventHandler` 註冊回調函數。
-    *   在 **Monolith 模式** 下，這是直接的內存函數調用，效能極高。
-    *   在 **Microservices 模式** 下，Adapter 會將 gRPC Stream 或 Redis Pub/Sub 消息轉換為此回調調用。
+### 3.1 依賴介面定義
+交互涉及兩個核心介面 (Defined in `pkg/service/color_game`):
 
-2.  **主動查詢**:
-    *   當玩家下注時，GS 調用 `GetCurrentRound` 來驗證當前狀態是否允許下注 (`CanAcceptBet`)。
+1.  **GMS 服務介面** (GS 依賴 GMS):
+    ```go
+    type GMSService interface {
+        GetCurrentRound(ctx context.Context, ...) (*pb.ColorGameGetCurrentRoundRsp, error)
+    }
+    ```
+2.  **GS 服務介面** (GMS 依賴 GS):
+    ```go
+    type ColorGameGSService interface {
+        RoundResult(ctx context.Context, ...) (*pb.ColorGameRoundResultRsp, error)
+    }
+    ```
 
-### 3.3 狀態響應邏輯
-*   `GAME_STATE_BETTING`: 觸發 System Unblock，開放下注 API。
-*   `GAME_STATE_DRAWING`: 觸發 System Block，拒絕新的下注請求。
-*   `GAME_STATE_RESULT`: 獲取開獎結果，啟動結算流程 (Settlement)。
+### 3.2 交互流程詳解
+
+#### 1. 下注驗證 (On-Demand Query)
+GS 是 **無狀態 (Stateless)** 的，它不維護當前遊戲階段的副本。
+*   當收到 `PlaceBet` 請求時，GS 會實時調用 `GMSService.GetCurrentRound`。
+*   由 GMS 判斷當前是否處於 `GAME_STATE_BETTING` 以及剩餘時間是否足夠。
+*   這種設計避免了分佈式系統中的狀態同步問題。
+
+#### 2. 結算通知 (Result Push)
+*   當 GMS 進入 `GAME_STATE_RESULT` 階段時，會主動調用 `ColorGameGSService.RoundResult`。
+*   GS 收到此 RPC/Method Call 後，觸發內部的批次結算流程 (Settlement Process)。
+*   這取代了傳統的事件訂閱模式，讓結算邏輯成為一個明確的服務入口 (Service Endpoint)。
