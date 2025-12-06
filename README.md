@@ -48,8 +48,8 @@ Our goal is to provide a "Battle-Tested" foundation for game developers, solving
 Detailed documentation is available in the `docs/` directory:
 
 *   **Architecture**: [Design Principles](docs/shared/design_principles.md) | [Project Evolution](docs/ai/project_evolution.md)
-*   **Modules**: [Gateway](docs/module/gateway/README.md) | [User](docs/module/user/README.md)
-*   **Guides**: [Service Startup Guide](docs/cmd/color_game.md) | [WebSocket Protocol](docs/websocket_protocol.md)
+*   **Modules**: [GMS](docs/module/color_game/gms/README.md) | [GS](docs/module/color_game/gs/README.md) | [Gateway](docs/module/gateway/README.md) | [User](docs/module/user/README.md)
+*   **Guides**: [Monolith Startup](docs/cmd/color_game/monolith/README.md)
 *   **Performance**: [Benchmark Report](docs/performance/color_game_benchmark.md)
 
 ---
