@@ -28,9 +28,7 @@ GS 監聽 GMS 的 `GAME_STATE_RESULT` 事件來觸發結算流程。
 *   **Repository**: 重構後的 `db` 包提供了 `BetOrderRepository`。
 *   **數據一致性**: 使用數據庫事務 (Transaction) 確保下注扣款與訂單創建的一致性。
 
-## 3. 與 GMS 的交互 (Interaction with GMS)
 
-GS並不直接依賴 GMS 的具體實作，而是通過 `pkg/service` 定義的介面進行交互。這確保了系統可以靈活地切換部署模式（單體或微服務）。
 
 ## 3. 與 GMS 的交互 (Interaction with GMS)
 
