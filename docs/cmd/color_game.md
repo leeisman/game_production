@@ -372,7 +372,26 @@ Client <-> [Gateway Service] <-> [User Service]
 GAME_STATE_ROUND_STARTED → GAME_STATE_BETTING → GAME_STATE_DRAWING → GAME_STATE_RESULT → GAME_STATE_ROUND_ENDED → (下一回合)
 ```
 
-### 7.2 各階段時長配置
+### 7.2 設計模式：觀察者模式 (Observer Pattern)
+
+狀態機使用 **Observer Pattern** 來解耦核心邏輯與外部通知。
+
+*   **機制**: `StateMachine` 維護一個 `EventHandler` 列表。
+*   **註冊**: 外部模組 (如 `GMSUseCase`) 通過 `RegisterEventHandler` 註冊回調函數。
+*   **通知 (`emitEvent`)**:
+    *   當狀態發生變化時，`emitEvent` 會被調用。
+    *   **非阻塞設計**: 系統會為每個註冊的 handler 啟動一個 **Goroutine** (`go handler(event)`) 進行異步通知。
+    *   這確保了狀態機的計時循環不會因為外部處理（如寫入 DB 或網絡廣播）的延遲而被阻塞。
+
+### 7.3 實現與併發模型 (Concurrency Model)
+
+狀態機在 `runRound` 中使用 `time.Sleep` 來控制階段時長。這在 Go 語言中是 **高效且安全** 的設計：
+
+*   **非阻塞 OS 線程**: Go 的 `time.Sleep` 僅會掛起當前 Goroutine (`G`)，並讓出底層 OS 線程 (`M`) 去執行其他任務（如下注請求）。
+*   **Timer 機制**: Go Runtime 使用全局堆 (Heap) 管理 Timer，時間到後自動喚醒 Goroutine，開銷極低。
+*   **Graceful Shutdown**: 當調用 `Stop()` 時，狀態機會等待當前階段 (`Sleep`) 結束後才檢查停止標誌，這確保了**回合的完整性**，不會在下注一半時突然中斷。
+
+### 7.4 各階段時長配置
 
 預設配置（可在 `StateMachine` 初始化時調整）：
 
@@ -386,7 +405,7 @@ GAME_STATE_ROUND_STARTED → GAME_STATE_BETTING → GAME_STATE_DRAWING → GAME_
 
 **總回合時長**: 約 **22 秒** (2 + 10 + 2 + 5 + 3)
 
-### 7.3 狀態事件詳細說明
+### 7.5 狀態事件詳細說明
 
 #### 1. GAME_STATE_ROUND_STARTED
 ```json
@@ -582,192 +601,19 @@ curl -X POST http://localhost:8081/api/users/login \
 }
 ```
 
-#### 步驟 3: 連接 WebSocket
+#### 步驟 3: 連接 WebSocket 與 遊戲互動
 
-使用獲取的 token 連接 WebSocket：
+詳細的 WebSocket 協議格式、指令與狀態流程，請參閱專屬文檔：
+[WebSocket 協議文檔](../../websocket_protocol.md)
 
-```javascript
-// JavaScript 範例
-const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
-const ws = new WebSocket(`ws://localhost:8081/ws?token=${token}`);
+該文檔包含：
+1.  **連接方式**: `ws://localhost:8081/ws?token=...`
+2.  **狀態通知**: `ColorGameRoundStateBRC`
+3.  **下注指令**: `ColorGamePlaceBetREQ`
+4.  **結算通知**: `ColorGameSettlementBRC`
+5.  **錯誤代碼表**
 
-ws.onopen = () => {
-  console.log("WebSocket 連接成功");
-};
-
-ws.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-  console.log("收到訊息:", message);
-  
-  // 處理不同類型的訊息
-  switch(message.command) {
-    case "ColorGameRoundStateBRC":
-      // 遊戲狀態更新
-      console.log("遊戲狀態:", message.data.state);
-      console.log("剩餘時間:", message.data.left_time, "秒");
-      break;
-    case "ColorGameResultBRC":
-      // 開獎結果
-      console.log("開獎結果:", message.data.winning_color);
-      break;
-    case "ColorGameSettlementBRC":
-      // 結算通知
-      console.log("結算:", message.data);
-      if (message.data.is_winner) {
-        console.log("恭喜！贏得:", message.data.win_amount);
-      }
-      break;
-  }
-};
-```
-
-#### 步驟 4: 下注
-
-在收到 `BETTING_STARTED` 狀態後，可以進行下注：
-
-```javascript
-// 下注請求
-const betRequest = {
-  game: "color_game",
-  command: "ColorGamePlaceBetREQ",  // 使用駝峰命名
-  data: {
-    color: "red",      // 可選: red, green, blue, yellow
-    amount: 100        // 下注金額
-  }
-};
-
-ws.send(JSON.stringify(betRequest));
-```
-
-**下注回應**（立即收到）:
-
-```json
-{
-  "game_code": "color_game",
-  "command": "ColorGamePlaceBetRSP",
-  "data": {
-    "error_code": 0,
-    "bet_id": "bet_20251205123456_1001_red",
-    "error": ""
-  }
-}
-```
-
-**下注失敗回應**:
-```json
-{
-  "game_code": "color_game",
-  "command": "ColorGamePlaceBetRSP",
-  "data": {
-    "error_code": 5,
-    "bet_id": "",
-    "error": "下注時間已結束"
-  }
-}
-```
-
-**ErrorCode 對照表**:
-- `0` = SUCCESS
-- `5` = INTERNAL_ERROR
-- `302` = INVALID_BET_AMOUNT
-- `301` = ROUND_NOT_ACTIVE
-- 完整列表見 `shared/proto/common/common.proto`
-
-#### 步驟 5: 接收結算通知
-
-當回合結束後，會收到結算通知：
-
-**有下注的玩家會收到兩次通知**：
-
-1. **個人結算通知**（包含下注詳情）:
-```json
-{
-  "game_code": "color_game",
-  "command": "ColorGameSettlementBRC",
-  "data": {
-    "round_id": "20251205123456",
-    "winning_color": "red",
-    "bet_id": "bet_20251205123456_1001_red",
-    "bet_color": "red",
-    "bet_amount": 100,
-    "win_amount": 200,
-    "is_winner": true
-  }
-}
-```
-
-2. **全局廣播**（所有玩家都收到）:
-```json
-{
-  "game_code": "color_game",
-  "command": "ColorGameSettlementBRC",
-  "data": {
-    "round_id": "20251205123456",
-    "winning_color": "red",
-    "bet_id": "",
-    "bet_color": "",
-    "bet_amount": 0,
-    "win_amount": 0,
-    "is_winner": false
-  }
-}
-```
-
-**無下注的玩家只收到全局廣播**。
-
-**前端處理建議**：
-```javascript
-let hasReceivedPersonalSettlement = false;
-
-ws.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-  
-  if (message.command === "ColorGameSettlementBRC") {
-    // 如果有 bet_id，這是個人結算通知
-    if (message.data.bet_id) {
-      hasReceivedPersonalSettlement = true;
-      showPersonalResult(message.data);
-    } 
-    // 如果沒有 bet_id，這是全局廣播
-    else if (!hasReceivedPersonalSettlement) {
-      // 只有沒收到個人通知的玩家才處理全局廣播
-      showWinningColor(message.data.winning_color);
-    }
-  }
-};
-```
-
-**欄位說明**:
-- `round_id`: 回合 ID
-- `winning_color`: 開獎顏色
-- `bet_id`: 下注 ID（無下注時為空）
-- `bet_color`: 下注顏色（無下注時為空）
-- `bet_amount`: 下注金額（無下注時為 0）
-- `win_amount`: 贏得金額（無下注或輸了時為 0）
-- `is_winner`: 是否贏家（無下注時為 false）
-
-### 3.4 完整流程範例 (cURL + wscat)
-
-```bash
-# 1. 註冊並登入
-TOKEN=$(curl -s -X POST http://localhost:8081/api/users/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"player1","password":"password123"}' \
-  | jq -r '.token')
-
-# 2. 使用 wscat 連接 WebSocket
-npm install -g wscat
-wscat -c "ws://localhost:8081/ws?token=$TOKEN"
-
-# 3. 等待收到 BETTING_STARTED 狀態
-
-# 4. 發送下注請求
-{"game":"color_game","command":"ColorGamePlaceBetREQ","data":{"color":"red","amount":100}}
-
-# 5. 等待開獎和結算
-```
-
-### 3.5 Microservices 模式
+### 3.4 Microservices 模式
 
 ```bash
 # 1. 啟動 GMS (遊戲核心)
@@ -853,32 +699,43 @@ Client <-> [Gateway Service] <-> [User Service]
 遊戲狀態機會自動循環執行以下階段：
 
 ```
-ROUND_STARTED → BETTING_STARTED → DRAWING → RESULT → ROUND_ENDED → (下一回合)
+GAME_STATE_ROUND_STARTED → GAME_STATE_BETTING → GAME_STATE_DRAWING → GAME_STATE_RESULT → GAME_STATE_ROUND_ENDED → (下一回合)
 ```
 
-### 7.2 各階段時長配置
+### 7.2 設計模式：觀察者模式 (Observer Pattern)
+
+狀態機使用 **Observer Pattern** 來解耦核心邏輯與外部通知。
+
+*   **機制**: `StateMachine` 維護一個 `EventHandler` 列表。
+*   **註冊**: 外部模組 (如 `GMSUseCase`) 通過 `RegisterEventHandler` 註冊回調函數。
+*   **通知 (`emitEvent`)**:
+    *   當狀態發生變化時，`emitEvent` 會被調用。
+    *   **非阻塞設計**: 系統會為每個註冊的 handler 啟動一個 **Goroutine** (`go handler(event)`) 進行異步通知。
+    *   這確保了狀態機的計時循環不會因為外部處理（如寫入 DB 或網絡廣播）的延遲而被阻塞。
+
+### 7.3 各階段時長配置
 
 預設配置（可在 `StateMachine` 初始化時調整）：
 
 | 階段 | 狀態 | 持續時間 | 說明 |
 |------|------|----------|------|
-| 1. 回合開始 | `ROUND_STARTED` | **2 秒** | 生成新的回合 ID，等待玩家準備 |
-| 2. 下注階段 | `BETTING_STARTED` | **10 秒** | 玩家可以下注，倒數計時顯示剩餘時間 |
-| 3. 開獎階段 | `DRAWING` | **2 秒** | 停止下注，系統抽取結果 |
-| 4. 結果公布 | `RESULT` | **5 秒** | 顯示開獎結果，觸發結算流程 |
-| 5. 回合結束 | `ROUND_ENDED` | **3 秒** | 休息時間，準備下一回合 |
+| 1. 回合開始 | `GAME_STATE_ROUND_STARTED` | **2 秒** | 生成新的回合 ID，等待玩家準備 |
+| 2. 下注階段 | `GAME_STATE_BETTING` | **10 秒** | 玩家可以下注，倒數計時顯示剩餘時間 |
+| 3. 開獎階段 | `GAME_STATE_DRAWING` | **2 秒** | 停止下注，系統抽取結果 |
+| 4. 結果公布 | `GAME_STATE_RESULT` | **5 秒** | 顯示開獎結果，觸發結算流程 |
+| 5. 回合結束 | `GAME_STATE_ROUND_ENDED` | **3 秒** | 休息時間，準備下一回合 |
 
 **總回合時長**: 約 **22 秒** (2 + 10 + 2 + 5 + 3)
 
-### 7.3 狀態事件詳細說明
+### 7.4 狀態事件詳細說明
 
-#### 1. ROUND_STARTED
+#### 1. GAME_STATE_ROUND_STARTED
 ```json
 {
     "command": "ColorGameRoundStateBRC",
     "data": {
         "round_id": "20251205123456",
-        "state": "EVENT_TYPE_ROUND_STARTED",
+        "state": "GAME_STATE_ROUND_STARTED",
         "left_time": 2,  // 等待 2 秒後開始下注
         "betting_end_timestamp": 0
     },
@@ -888,13 +745,13 @@ ROUND_STARTED → BETTING_STARTED → DRAWING → RESULT → ROUND_ENDED → (�
 - **left_time**: 表示距離下注開始還有 2 秒
 - **用途**: 前端可以顯示「準備中，2 秒後開始下注」
 
-#### 2. BETTING_STARTED
+#### 2. GAME_STATE_BETTING
 ```json
 {
     "command": "ColorGameRoundStateBRC",
     "data": {
         "round_id": "20251205123456",
-        "state": "EVENT_TYPE_BETTING_STARTED",
+        "state": "GAME_STATE_BETTING",
         "left_time": 10,  // 距離下注結束還有幾秒
         "betting_end_timestamp": 1733377991  // 下注結束的 Unix 時間戳
     },
@@ -905,13 +762,13 @@ ROUND_STARTED → BETTING_STARTED → DRAWING → RESULT → ROUND_ENDED → (�
 - **betting_end_timestamp**: 下注結束的絕對時間
 - **用途**: 前端顯示倒數計時，玩家可以下注
 
-#### 3. DRAWING
+#### 3. GAME_STATE_DRAWING
 ```json
 {
     "command": "ColorGameRoundStateBRC",
     "data": {
         "round_id": "20251205123456",
-        "state": "EVENT_TYPE_DRAWING",
+        "state": "GAME_STATE_DRAWING",
         "left_time": 2,  // 開獎階段持續 2 秒
         "betting_end_timestamp": 1733377991
     },
@@ -920,28 +777,28 @@ ROUND_STARTED → BETTING_STARTED → DRAWING → RESULT → ROUND_ENDED → (�
 ```
 - **用途**: 停止接受下注，顯示開獎動畫
 
-#### 4. RESULT
-```json
-{
-    "command": "ColorGameResultBRC",
-    "data": {
-        "round_id": "20251205123456",
-        "winning_color": "red",  // 開獎結果
-        "left_time": 5,  // 結果顯示持續 5 秒
-        "timestamp": 1733377993
-    },
-    "game_code": "color_game"
-}
-```
-- **用途**: 顯示開獎結果，觸發玩家結算
-
-#### 5. ROUND_ENDED
+#### 4. GAME_STATE_RESULT
 ```json
 {
     "command": "ColorGameRoundStateBRC",
     "data": {
         "round_id": "20251205123456",
-        "state": "EVENT_TYPE_ROUND_ENDED",
+        "state": "GAME_STATE_RESULT",
+        "left_time": 5,  // 結果顯示持續 5 秒
+        "betting_end_timestamp": 1733377991
+    },
+    "game_code": "color_game"
+}
+```
+- **用途**: 顯示開獎結果，觸發玩家結算（結算結果通過 `ColorGameSettlementBRC` 發送）
+
+#### 5. GAME_STATE_ROUND_ENDED
+```json
+{
+    "command": "ColorGameRoundStateBRC",
+    "data": {
+        "round_id": "20251205123456",
+        "state": "GAME_STATE_ROUND_ENDED",
         "left_time": 3,  // 休息時間 3 秒
         "betting_end_timestamp": 1733377991
     },
@@ -950,7 +807,7 @@ ROUND_STARTED → BETTING_STARTED → DRAWING → RESULT → ROUND_ENDED → (�
 ```
 - **用途**: 回合結束，準備下一回合
 
-### 7.4 自定義時長配置
+### 7.6 自定義時長配置
 
 如需調整各階段時長，可在啟動時修改：
 
