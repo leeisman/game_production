@@ -28,9 +28,30 @@ GS 監聽 GMS 的 `GAME_STATE_RESULT` 事件來觸發結算流程。
 *   **Repository**: 重構後的 `db` 包提供了 `BetOrderRepository`。
 *   **數據一致性**: 使用數據庫事務 (Transaction) 確保下注扣款與訂單創建的一致性。
 
-## 3. 與 GMS 的交互
-GS 作為 GMS 的觀察者 (Observer)，註冊並監聽遊戲狀態變更。
+## 3. 與 GMS 的交互 (Interaction with GMS)
 
-*   `GAME_STATE_BETTING`: 開放 API 接收下注。
-*   `GAME_STATE_DRAWING`: 關閉 API，拒絕新的下注。
-*   `GAME_STATE_RESULT`: 獲取開獎結果，開始結算。
+GS並不直接依賴 GMS 的具體實作，而是通過 `pkg/service` 定義的介面進行交互。這確保了系統可以靈活地切換部署模式（單體或微服務）。
+
+### 3.1 依賴介面
+GS 依賴於 `pkg/service/color_game/gms.go` 中定義的 `GMSService` 介面：
+
+```go
+type GMSService interface {
+    GetCurrentRound(ctx context.Context) (*domain.Round, error)
+    RegisterEventHandler(handler func(event domain.GameEvent))
+}
+```
+
+### 3.2 交互模式
+1.  **狀態監聽 (Observer)**:
+    *   GS 通過 `RegisterEventHandler` 註冊回調函數。
+    *   在 **Monolith 模式** 下，這是直接的內存函數調用，效能極高。
+    *   在 **Microservices 模式** 下，Adapter 會將 gRPC Stream 或 Redis Pub/Sub 消息轉換為此回調調用。
+
+2.  **主動查詢**:
+    *   當玩家下注時，GS 調用 `GetCurrentRound` 來驗證當前狀態是否允許下注 (`CanAcceptBet`)。
+
+### 3.3 狀態響應邏輯
+*   `GAME_STATE_BETTING`: 觸發 System Unblock，開放下注 API。
+*   `GAME_STATE_DRAWING`: 觸發 System Block，拒絕新的下注請求。
+*   `GAME_STATE_RESULT`: 獲取開獎結果，啟動結算流程 (Settlement)。
