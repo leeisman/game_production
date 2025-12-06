@@ -21,7 +21,7 @@ import (
 	gatewayUseCase "github.com/frankieli/game_product/internal/modules/gateway/usecase"
 	"github.com/frankieli/game_product/internal/modules/gateway/ws"
 	walletModule "github.com/frankieli/game_product/internal/modules/wallet"
-	userGrpcAdapter "github.com/frankieli/game_product/pkg/service/user"
+	grpcClient "github.com/frankieli/game_product/pkg/grpc_client"
 
 	"github.com/frankieli/game_product/pkg/discovery"
 	"github.com/frankieli/game_product/pkg/logger"
@@ -42,24 +42,21 @@ func main() {
 	defer rdb.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		logger.FatalGlobal().Err(err).Msg("Failed to connect to Redis")
-	}
-	logger.InfoGlobal().Msg("✅ Redis connected")
 
 	// 3. Initialize Service Discovery (Nacos)
 	registry, err := discovery.NewNacosClient(cfg.Nacos.Host, cfg.Nacos.Port, cfg.Nacos.NamespaceID)
 	if err != nil {
 		logger.FatalGlobal().Err(err).Msg("Failed to create Nacos client")
 	}
-
-	// 4. Initialize User Service Client (gRPC)
-	userClient, err := userGrpcAdapter.NewClient(registry, "auth-service")
-	if err != nil {
-		logger.FatalGlobal().Err(err).Msg("Failed to create User Service client")
+	defer cancel()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		logger.FatalGlobal().Err(err).Msg("Failed to connect to Redis")
 	}
-	logger.InfoGlobal().Msg("✅ User Service Client initialized")
+	logger.InfoGlobal().Msg("✅ Redis connected")
+
+	// 4. Initialize Unified gRPC Client (acting as User Service Client)
+	userClient := grpcClient.NewClient(registry)
+	logger.InfoGlobal().Msg("✅ Unified gRPC Client initialized")
 
 	// 4. Initialize GMS Client (Redis)
 	// No gRPC connection needed for GMS anymore
