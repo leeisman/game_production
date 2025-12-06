@@ -72,7 +72,35 @@ We strictly follow dependencies: `Adapter -> UseCase -> Domain`.
 
 ---
 
-## 5. Current Roadmap (Status: 2025-12-06)
+## 5. Project Structure & Navigation
+
+How to navigate the codebase:
+
+### 5.1 Root Directories
+*   `cmd/`: **Entry Points**.
+    *   `monolith/`: The main executable for the Modular Monolith (wires everything together).
+    *   `microservices/`: Individual entry points for distributed deployment.
+*   `internal/modules/`: **Business Logic**. Contains `color_game` (GMS/GS), `gateway`, `user`.
+*   `pkg/`: **Public Shared**.
+    *   `service/`: **External Contracts** (Interfaces) for module communication.
+    *   `logger/`, `utils/`: Common utilities.
+*   `shared/proto/`: **API Definitions**. The Single Source of Truth for all data structures and RPC methods.
+
+### 5.2 Module Layout (Standardized)
+Every module inside `internal/modules/` follows this exact structure:
+```text
+internal/modules/<module_name>/
+├── domain/       # [Pure] Structs, Repository Interfaces, Errors
+├── usecase/      # [Logic] Business Flow, State Management (Depends on Domain)
+└── adapter/      # [Glue]  Implementation of Interfaces
+    ├── http/     # Gin Handlers
+    ├── local/    # In-Memory Service Implementation (for Monolith)
+    └── repository/ # DB Implementations (Postgres/Redis)
+```
+
+---
+
+## 6. Current Roadmap (Status: 2025-12-06)
 
 *   [x] **Refactoring**: Documentation modularization (GMS, GS, Monolith READMEs).
 *   [x] **Resilience**: GMS Worker Pool with Fallback.
