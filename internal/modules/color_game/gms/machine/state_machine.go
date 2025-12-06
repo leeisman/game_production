@@ -43,12 +43,16 @@ type StateMachine struct {
 	eventHandlers []EventHandler
 	rnd           *rand.Rand
 
+	// Worker Pool
+	jobQueue chan func()
+	workerWg sync.WaitGroup
+
 	// durations for each phase
 	BettingDuration time.Duration
 	DrawingDuration time.Duration
 	ResultDuration  time.Duration
-	WaitDuration    time.Duration // Wait time after ROUND_STARTED before betting
-	RestDuration    time.Duration // Rest time after ROUND_ENDED before next round
+	WaitDuration    time.Duration
+	RestDuration    time.Duration
 	phaseEndTime    time.Time
 
 	stopping bool
@@ -59,10 +63,11 @@ func NewStateMachine() *StateMachine {
 	return &StateMachine{
 		eventHandlers:   make([]EventHandler, 0),
 		rnd:             rand.New(rand.NewSource(time.Now().UnixNano())),
+		jobQueue:        make(chan func(), 100), // Buffered job queue
 		BettingDuration: 10 * time.Second,
 		DrawingDuration: 2 * time.Second,
 		ResultDuration:  5 * time.Second,
-		WaitDuration:    2 * time.Second, // 2 seconds wait after ROUND_STARTED
+		WaitDuration:    2 * time.Second,
 		RestDuration:    3 * time.Second,
 	}
 }
@@ -74,7 +79,7 @@ func (sm *StateMachine) RegisterEventHandler(handler EventHandler) {
 	sm.eventHandlers = append(sm.eventHandlers, handler)
 }
 
-// emitEvent emits an event to all handlers
+// emitEvent emits an event to all handlers via worker pool
 func (sm *StateMachine) emitEvent(event GameEvent) {
 	sm.mu.RLock()
 	handlers := make([]EventHandler, len(sm.eventHandlers))
@@ -82,8 +87,53 @@ func (sm *StateMachine) emitEvent(event GameEvent) {
 	sm.mu.RUnlock()
 
 	for _, handler := range handlers {
-		go handler(event)
+		// Capture closure variables
+		h := handler
+		evt := event
+
+		select {
+		case sm.jobQueue <- func() { h(evt) }:
+			// Job submitted successfully
+		default:
+			// Queue is full, degrade to spawning a goroutine directly
+			logger.Warn(context.Background()).
+				Str("round_id", event.RoundID).
+				Str("event_type", event.Type.String()).
+				Msg("⚠️ [GMS] Job queue full, degrading to goroutine")
+			go h(evt)
+		}
 	}
+}
+
+// startWorkers starts the worker pool
+func (sm *StateMachine) startWorkers() {
+	workerCount := 5
+	for i := 0; i < workerCount; i++ {
+		sm.workerWg.Add(1)
+		go func(workerID int) {
+			defer sm.workerWg.Done()
+			for job := range sm.jobQueue {
+				// Execute job with panic recovery
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							logger.Error(context.Background()).
+								Interface("panic", r).
+								Int("worker_id", workerID).
+								Msg("🔥 [GMS] Worker panic recovered")
+						}
+					}()
+					job()
+				}()
+			}
+		}(i)
+	}
+}
+
+// shutdownWorkers stops key workers
+func (sm *StateMachine) shutdownWorkers() {
+	close(sm.jobQueue)
+	sm.workerWg.Wait()
 }
 
 // Stop signals the state machine to stop after the current round
@@ -95,7 +145,12 @@ func (sm *StateMachine) Stop() {
 
 // Start starts the state machine loop
 func (sm *StateMachine) Start(ctx context.Context) {
-	logger.Info(ctx).Msg("🚀 [GMS] State Machine Started")
+	logger.Info(ctx).Msg("🚀 [GMS] State Machine Started (Worker Pool Active)")
+
+	// Start workers
+	sm.startWorkers()
+	defer sm.shutdownWorkers()
+
 	for {
 		sm.mu.RLock()
 		stopping := sm.stopping
@@ -133,11 +188,10 @@ func (sm *StateMachine) runRound(ctx context.Context) {
 	sm.emitEvent(GameEvent{
 		Type:                pbColorGame.ColorGameState_GAME_STATE_ROUND_STARTED,
 		RoundID:             roundID,
-		LeftTime:            int64(sm.WaitDuration.Seconds()), // Wait time before betting starts
+		LeftTime:            int64(sm.WaitDuration.Seconds()),
 		BettingEndTimestamp: 0,
 	})
 
-	// Wait before starting betting phase
 	time.Sleep(sm.WaitDuration)
 
 	//--------------------------------------------

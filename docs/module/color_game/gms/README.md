@@ -20,13 +20,14 @@ GAME_STATE_ROUND_STARTED → GAME_STATE_BETTING → GAME_STATE_DRAWING → GAME_
 *   **註冊**: 外部模組 (如 `GMSUseCase`) 通過 `RegisterEventHandler` 註冊回調函數。
 *   **通知 (`emitEvent`)**:
     *   當狀態發生變化時，`emitEvent` 會被調用。
-    *   **非阻塞設計**: 系統會為每個註冊的 handler 啟動一個 **Goroutine** (`go handler(event)`) 進行異步通知。
-    *   這確保了狀態機的計時循環不會因為外部處理（如寫入 DB 或網絡廣播）的延遲而被阻塞。
+    *   **非阻塞設計**: 系統使用 **Worker Pool** 來異步處理所有通知，避免阻塞主循環。
 
 ### 1.3 實現與併發模型 (Concurrency Model)
 
-狀態機在 `runRound` 中使用 `time.Sleep` 來控制階段時長。這在 Go 語言中是 **高效且安全** 的設計：
+狀態機設計了混合型的併發模型，以確保在不同負載下的穩定性：
 
+*   **Worker Pool**: 預設啟動一組固定數量的 Workers (e.g., 5個) 來消費 `jobQueue` 中的事件通知任務。這是主要的處理機制，能有效控制資源使用。
+*   **Fallback 機制**: 當 `jobQueue` 已滿 (Worker 處理不及) 時，系統會自動**降級 (Degrade)** 為直接啟動一個臨時 Goroutine (`go handler(event)`) 來處理該次事件。這確保了**絕對不會因為隊列滿而丟失關鍵的狀態廣播**。
 *   **非阻塞 OS 線程**: Go 的 `time.Sleep` 僅會掛起當前 Goroutine (`G`)，並讓出底層 OS 線程 (`M`) 去執行其他任務（如下注請求）。
 *   **Timer 機制**: Go Runtime 使用全局堆 (Heap) 管理 Timer，時間到後自動喚醒 Goroutine，開銷極低。
 *   **Graceful Shutdown**: 當調用 `Stop()` 時，狀態機會等待當前階段 (`Sleep`) 結束後才檢查停止標誌，這確保了**回合的完整性**，不會在下注一半時突然中斷。
