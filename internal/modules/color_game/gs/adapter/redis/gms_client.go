@@ -80,7 +80,7 @@ func (c *GMSClient) GetCurrentRound(ctx context.Context, req *pb.ColorGameGetCur
 	return &pb.ColorGameGetCurrentRoundRsp{
 		ErrorCode:           pbCommon.ErrorCode_SUCCESS,
 		RoundId:             stateData.RoundID,
-		State:               stateData.State,
+		State:               pb.ColorGameState(pb.ColorGameState_value[stateData.State]),
 		BettingEndTimestamp: stateData.BettingEndTimestamp,
 		LeftTime:            leftTime,
 		PlayerBets:          []*pb.ColorGamePlayerBet{}, // Not stored in GMS state

@@ -8,8 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/frankieli/game_product/internal/config"
@@ -18,12 +16,12 @@ import (
 	colorgameGSDomain "github.com/frankieli/game_product/internal/modules/color_game/gs/domain"
 	colorgameGSMemory "github.com/frankieli/game_product/internal/modules/color_game/gs/repository/memory"
 	colorgameGSUseCase "github.com/frankieli/game_product/internal/modules/color_game/gs/usecase"
-	userGrpc "github.com/frankieli/game_product/internal/modules/gateway/adapter/grpc"
 	gatewayHttp "github.com/frankieli/game_product/internal/modules/gateway/adapter/http"
 	gatewayAdapter "github.com/frankieli/game_product/internal/modules/gateway/adapter/local"
 	gatewayUseCase "github.com/frankieli/game_product/internal/modules/gateway/usecase"
 	"github.com/frankieli/game_product/internal/modules/gateway/ws"
 	walletModule "github.com/frankieli/game_product/internal/modules/wallet"
+	userGrpcAdapter "github.com/frankieli/game_product/pkg/service/user"
 
 	"github.com/frankieli/game_product/pkg/discovery"
 	"github.com/frankieli/game_product/pkg/logger"
@@ -50,32 +48,18 @@ func main() {
 	}
 	logger.InfoGlobal().Msg("✅ Redis connected")
 
-	// Initialize Nacos Client for Discovery
-	nacosClient, err := discovery.NewNacosClient(cfg.Nacos.Host, cfg.Nacos.Port, cfg.Nacos.NamespaceID)
+	// 3. Initialize Service Discovery (Nacos)
+	registry, err := discovery.NewNacosClient(cfg.Nacos.Host, cfg.Nacos.Port, cfg.Nacos.NamespaceID)
 	if err != nil {
-		logger.ErrorGlobal().Err(err).Msg("Failed to create Nacos client, using default addresses")
+		logger.FatalGlobal().Err(err).Msg("Failed to create Nacos client")
 	}
 
-	// 3. Connect to User Service via gRPC
-	userAddr := "localhost:50051" // Default fallback
-	if nacosClient != nil {
-		addr, err := nacosClient.GetService("auth-service")
-		if err == nil {
-			userAddr = addr
-			logger.InfoGlobal().Str("address", userAddr).Msg("Discovered User Service via Nacos")
-		} else {
-			logger.ErrorGlobal().Err(err).Msg("Failed to discover User Service")
-		}
-	}
-
-	userConn, err := grpc.Dial(userAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// 4. Initialize User Service Client (gRPC)
+	userClient, err := userGrpcAdapter.NewClient(registry, "auth-service")
 	if err != nil {
-		logger.FatalGlobal().Err(err).Msg("Failed to connect to User Service")
+		logger.FatalGlobal().Err(err).Msg("Failed to create User Service client")
 	}
-	defer userConn.Close()
-	logger.InfoGlobal().Str("address", userAddr).Msg("Connected to User Service")
-
-	userClient := userGrpc.NewUserClient(userConn)
+	logger.InfoGlobal().Msg("✅ User Service Client initialized")
 
 	// 4. Initialize GMS Client (Redis)
 	// No gRPC connection needed for GMS anymore
