@@ -135,6 +135,33 @@ go run cmd/color_game/monolith/main.go
 
 The service will start on port `8081`.
 
+### Running Microservices (New!)
+
+We now support a full microservices deployment with Service Discovery (Nacos) and gRPC communication.
+
+See [Microservices Guide](docs/color_game/microservices/readme.md) for detailed setup instructions.
+
+```bash
+# 1. Start Infrastructure (Nacos, Redis, Postgres)
+docker-compose up -d
+
+# 2. Start Services (in separate terminals)
+go run cmd/color_game/microservices/gateway/main.go
+go run cmd/color_game/microservices/gms/main.go
+go run cmd/color_game/microservices/gs/main.go
+```
+
+### 🛠 OPS Console
+
+Debugging gRPC microservices is easy with our built-in OPS tool:
+
+```bash
+go run cmd/ops/main.go
+# Open browser at http://localhost:7090
+```
+- **Tests**: Manually trigger broadcasts.
+- **Inspect**: View service status and routing tables.
+
 ---
 
 ## 📝 License

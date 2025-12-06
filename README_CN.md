@@ -135,6 +135,33 @@ go run cmd/color_game/monolith/main.go
 
 服務將在端口 `8081` 啟動。
 
+### 運行微服務模式 (Microservices) (新!)
+
+我們現在支持完整的微服務部署，包含 Nacos 服務發現與 gRPC 通訊。
+
+查看 [微服務部署指南](docs/cmd/color_game/microservices/readme.md) 了解詳細設置步驟。
+
+```bash
+# 1. 啟動基礎設施 (Nacos, Redis, Postgres)
+docker-compose up -d
+
+# 2. 啟動各服務 (在不同終端中)
+go run cmd/color_game/microservices/gateway/main.go
+go run cmd/color_game/microservices/gms/main.go
+go run cmd/color_game/microservices/gs/main.go
+```
+
+### 🛠 OPS 運維控制台 (OPS Console)
+
+使用內建的 OPS 工具輕鬆調試 gRPC 微服務：
+
+```bash
+go run cmd/ops/main.go
+# 瀏覽器打開 http://localhost:7090
+```
+- **測試 (Tests)**: 手動觸發廣播。
+- **監控 (Inspect)**: 查看服務狀態與路由表。
+
 ---
 
 ## 📝 授權 (License)
