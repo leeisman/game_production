@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch } from 'vue';
 
 const methodWithDefaults = {
   'ValidateToken': { "token": "your_jwt_token_here" },
@@ -26,6 +26,7 @@ watch(selectedMethod, (newVal) => {
 })
 
 async function execute() {
+  console.log("Starting execute...", selectedMethod.value)
   loading.value = true
   error.value = ''
   response.value = null
@@ -35,10 +36,12 @@ async function execute() {
     let payload = {}
     try {
       payload = JSON.parse(payloadStr.value)
+      console.log("Payload parsed:", payload)
     } catch (e) {
       throw new Error("Invalid JSON Payload")
     }
 
+    console.log("Fetching /api/grpc_call...")
     const res = await fetch('/api/grpc_call', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -49,12 +52,16 @@ async function execute() {
       })
     })
 
+    console.log("Fetch status:", res.status)
     const data = await res.json()
+    console.log("Response data:", data)
+
     if (!res.ok) {
       throw new Error(data.error || 'Request failed')
     }
     response.value = data
   } catch (e: any) {
+    console.error("Execute error:", e)
     error.value = e.message
   } finally {
     loading.value = false
@@ -63,27 +70,27 @@ async function execute() {
 </script>
 
 <template>
-  <div class="bg-white p-6 rounded-lg shadow-lg">
-    <h2 class="text-xl font-bold mb-4 text-gray-800 border-b pb-2">Generic gRPC Caller</h2>
+  <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg">
+    <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-white border-b dark:border-gray-700 pb-2">Generic gRPC Caller</h2>
     
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <!-- Left Column: Input -->
       <div class="space-y-4">
         <div>
-          <label class="block font-semibold mb-1">Method</label>
-          <select v-model="selectedMethod" class="w-full border p-2 rounded bg-gray-50">
-            <option v-for="(val, key) in methodWithDefaults" :key="key" :value="key">
+          <label class="block font-semibold mb-1 text-gray-900 dark:text-gray-200">Method</label>
+          <select v-model="selectedMethod" class="w-full border dark:border-gray-600 p-2 rounded bg-gray-50 dark:bg-gray-700 dark:text-gray-100">
+            <option v-for="(_, key) in methodWithDefaults" :key="key" :value="key">
               {{ key }}
             </option>
           </select>
         </div>
 
         <div>
-           <label class="block font-semibold mb-1">JSON Payload</label>
+           <label class="block font-semibold mb-1 text-gray-900 dark:text-gray-200">JSON Payload</label>
            <textarea 
              v-model="payloadStr" 
              rows="8" 
-             class="w-full border p-2 rounded font-mono text-sm bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none"
+             class="w-full border dark:border-gray-600 p-2 rounded font-mono text-sm bg-gray-50 dark:bg-gray-700 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none"
            ></textarea>
         </div>
 
@@ -98,12 +105,12 @@ async function execute() {
       </div>
 
       <!-- Right Column: Output -->
-      <div class="bg-gray-100 p-4 rounded border h-full min-h-[300px] overflow-auto">
-        <label class="block font-semibold mb-2 text-gray-600">Response</label>
+      <div class="bg-gray-100 dark:bg-gray-900 p-4 rounded border dark:border-gray-700 h-full min-h-[300px] overflow-auto">
+        <label class="block font-semibold mb-2 text-gray-600 dark:text-gray-400">Response</label>
         
-        <div v-if="error" class="text-red-600 font-mono whitespace-pre-wrap">{{ error }}</div>
+        <div v-if="error" class="text-red-600 dark:text-red-400 font-mono whitespace-pre-wrap">{{ error }}</div>
         
-        <div v-if="response" class="text-gray-800 font-mono text-sm whitespace-pre-wrap">
+        <div v-if="response" class="text-gray-800 dark:text-gray-200 font-mono text-sm whitespace-pre-wrap">
 {{ JSON.stringify(response, null, 2) }}
         </div>
 
