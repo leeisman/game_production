@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,8 +31,8 @@ import (
 
 func main() {
 	logger.Init(logger.Config{
-		Level:  "debug",
-		Format: "console",
+		Level:  "info",
+		Format: "json",
 	})
 
 	logger.InfoGlobal().Msg("🌐 Starting Color Game Gateway (Microservices Mode)...")
@@ -139,9 +143,55 @@ func main() {
 		Str("ws_url", fmt.Sprintf("ws://localhost:%s/ws?token=YOUR_TOKEN", port)).
 		Msg("🚀 Gateway HTTP/WebSocket running")
 
-	if err := r.Run(":" + port); err != nil {
-		logger.FatalGlobal().Err(err).Msg("Failed to start server")
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: r,
 	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.FatalGlobal().Err(err).Msg("Failed to start HTTP server")
+		}
+	}()
+
+	// 13. Graceful Shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	logger.InfoGlobal().Msg("🛑 Shutting down Gateway...")
+
+	// 1. Deregister from Nacos (Stop gRPC traffic)
+	registry.DeregisterService(gatewayGrpcServiceName, ip, uint64(grpcPort))
+	logger.InfoGlobal().Msg("✅ Gateway gRPC deregistered")
+
+	// 2. Stop HTTP Server (Stop new WebSocket connections)
+	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+	if err := srv.Shutdown(ctxShutdown); err != nil {
+		logger.ErrorGlobal().Err(err).Msg("HTTP Server forced to shutdown")
+	}
+	logger.InfoGlobal().Msg("✅ HTTP Server stopped")
+
+	// 3. Stop gRPC Server (Finish pending broadcasts)
+	grpcStopped := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(grpcStopped)
+	}()
+
+	select {
+	case <-grpcStopped:
+		logger.InfoGlobal().Msg("✅ gRPC Server stopped gracefully")
+	case <-time.After(5 * time.Second):
+		logger.WarnGlobal().Msg("⚠️ gRPC Server stop timed out, forcing Stop")
+		grpcServer.Stop()
+	}
+
+	// 4. Shutdown WebSocket Manager (Close active connections)
+	wsManager.Shutdown()
+	logger.InfoGlobal().Msg("✅ WebSocket Manager stopped")
+
+	logger.InfoGlobal().Msg("👋 Gateway shutdown complete")
 }
 
 // Note: subscribeToGMSEvents removed in microservices mode
