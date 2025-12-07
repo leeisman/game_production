@@ -7,6 +7,7 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/naming_client"
 	"github.com/nacos-group/nacos-sdk-go/v2/common/constant"
+	"github.com/nacos-group/nacos-sdk-go/v2/model"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 )
 
@@ -117,6 +118,25 @@ func (nc *NacosClient) GetServices(serviceName string) ([]string, error) {
 		}
 	}
 	return addrs, nil
+}
+
+// Subscribe registers a callback for service changes
+func (nc *NacosClient) Subscribe(serviceName string, callback func(services []string)) error {
+	return nc.client.Subscribe(&vo.SubscribeParam{
+		ServiceName: serviceName,
+		SubscribeCallback: func(services []model.Instance, err error) {
+			if err != nil {
+				return
+			}
+			var addrs []string
+			for _, instance := range services {
+				if instance.Enable && instance.Healthy {
+					addrs = append(addrs, fmt.Sprintf("%s:%d", instance.Ip, instance.Port))
+				}
+			}
+			callback(addrs)
+		},
+	})
 }
 
 // GetAllServicesList returns lists of all registered service names

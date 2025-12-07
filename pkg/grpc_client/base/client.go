@@ -1,3 +1,4 @@
+// Package base provides the base gRPC client implementation with service discovery and load balancing.
 package base
 
 import (
@@ -26,58 +27,55 @@ type BaseClient struct {
 
 	// Service Discovery Cache with TTL
 	serviceAddrs    map[string][]string
-	serviceAddrsTTL map[string]time.Time // Cache expiration time
+	serviceAddrsTTL map[string]time.Time // Still used but with long expiration
 	addrsMu         sync.RWMutex
 	requestGroup    singleflight.Group
-	cacheTTL        time.Duration // Default: 10 seconds
+
+	// Subscription tracking
+	subscribed  map[string]bool
+	subscribeMu sync.Mutex
 
 	// Worker Pool
 	broadcastQueue chan func()
 }
 
 // GetServiceAddrs returns the list of healthy instance addresses for a service.
-// It uses caching with TTL, singleflight to minimize registry load.
 func (c *BaseClient) GetServiceAddrs(serviceName string) ([]string, error) {
-	// 1. Try Cache first and check TTL
+	// 1. Try Cache first
 	c.addrsMu.RLock()
 	addrs, ok := c.serviceAddrs[serviceName]
-	ttl, hasTTL := c.serviceAddrsTTL[serviceName]
 	c.addrsMu.RUnlock()
 
-	// Cache hit and not expired
-	if ok && hasTTL && time.Now().Before(ttl) && len(addrs) > 0 {
+	// If we have addresses, return them.
+	// We assume subscription keeps them up to date.
+	if ok && len(addrs) > 0 {
 		return addrs, nil
 	}
 
-	// 2. Cache miss or expired: Fetch from Registry with Singleflight
+	// 2. Fetch Initial Data & Ensure Subscription
 	val, err, _ := c.requestGroup.Do(serviceName, func() (interface{}, error) {
-		// Double check cache (another goroutine might have updated it)
+		// Double check cache
 		c.addrsMu.RLock()
 		cached, ok := c.serviceAddrs[serviceName]
-		ttl, hasTTL := c.serviceAddrsTTL[serviceName]
 		c.addrsMu.RUnlock()
 
-		if ok && hasTTL && time.Now().Before(ttl) && len(cached) > 0 {
+		if ok && len(cached) > 0 {
 			return cached, nil
 		}
 
-		// Fetch from Registry
+		// Ensure we are subscribed to updates for this service
+		c.ensureSubscribed(serviceName)
+
+		// Fetch currently available instances directly (Synchronous)
 		fetchedAddrs, err := c.Registry.GetServices(serviceName)
 		if err != nil {
 			return nil, err
 		}
 
-		// Update Cache with new TTL
+		// Update Cache
 		c.addrsMu.Lock()
 		c.serviceAddrs[serviceName] = fetchedAddrs
-		c.serviceAddrsTTL[serviceName] = time.Now().Add(c.cacheTTL)
 		c.addrsMu.Unlock()
-
-		logger.InfoGlobal().
-			Str("service", serviceName).
-			Int("instances", len(fetchedAddrs)).
-			Dur("ttl", c.cacheTTL).
-			Msg("Service addresses cached")
 
 		return fetchedAddrs, nil
 	})
@@ -87,6 +85,41 @@ func (c *BaseClient) GetServiceAddrs(serviceName string) ([]string, error) {
 	}
 
 	return val.([]string), nil
+}
+
+// ensureSubscribed registers a listener for the service if not already registered
+func (c *BaseClient) ensureSubscribed(serviceName string) {
+	c.subscribeMu.Lock()
+	defer c.subscribeMu.Unlock()
+
+	if c.subscribed[serviceName] {
+		return
+	}
+
+	// Register Subscription
+	err := c.Registry.Subscribe(serviceName, func(services []string) {
+		// Add random jitter (0-3s) to prevent thundering herd on local lock/cpu
+		// when Nacos pushes updates to many clients simultaneously
+		jitter := time.Duration(rand.Intn(3000)) * time.Millisecond
+		time.Sleep(jitter)
+
+		c.addrsMu.Lock()
+		c.serviceAddrs[serviceName] = services
+		c.addrsMu.Unlock()
+
+		logger.InfoGlobal().
+			Str("service", serviceName).
+			Int("instances", len(services)).
+			Msg("Service instances updated via Nacos Push")
+	})
+
+	if err != nil {
+		logger.ErrorGlobal().Str("service", serviceName).Err(err).Msg("Failed to subscribe to service updates")
+		// We don't mark as subscribed so we might retry later, or fallback to manual fetch
+	} else {
+		c.subscribed[serviceName] = true
+		logger.InfoGlobal().Str("service", serviceName).Msg("Subscribed to service updates")
+	}
 }
 
 // GetLBConn performs Client-Side Load Balancing (Random) to get a connection for a service
@@ -115,7 +148,7 @@ func NewBaseClient(registry discovery.Registry) *BaseClient {
 		conns:           make(map[string]*grpc.ClientConn),
 		serviceAddrs:    make(map[string][]string),
 		serviceAddrsTTL: make(map[string]time.Time),
-		cacheTTL:        10 * time.Second,        // Cache TTL: 10 seconds
+		subscribed:      make(map[string]bool),
 		broadcastQueue:  make(chan func(), 1024), // Buffer size 1024
 	}
 
@@ -124,47 +157,7 @@ func NewBaseClient(registry discovery.Registry) *BaseClient {
 		go c.StartWorker()
 	}
 
-	// Start Service Watcher
-	go c.StartServiceWatcher()
-
 	return c
-}
-
-// StartServiceWatcher periodically updates the service cache for all known services
-func (c *BaseClient) StartServiceWatcher() {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		c.addrsMu.RLock()
-		if len(c.serviceAddrs) == 0 {
-			c.addrsMu.RUnlock()
-			continue
-		}
-
-		// Collect known services
-		services := make([]string, 0, len(c.serviceAddrs))
-		for k := range c.serviceAddrs {
-			services = append(services, k)
-		}
-		c.addrsMu.RUnlock()
-
-		c.updateServices(services...)
-	}
-}
-
-func (c *BaseClient) updateServices(services ...string) {
-	for _, svc := range services {
-		addrs, err := c.Registry.GetServices(svc)
-		if err != nil {
-			logger.WarnGlobal().Str("service", svc).Err(err).Msg("Failed to update service cache")
-			continue
-		}
-
-		c.addrsMu.Lock()
-		c.serviceAddrs[svc] = addrs
-		c.addrsMu.Unlock()
-	}
 }
 
 func (c *BaseClient) StartWorker() {

@@ -17,76 +17,58 @@
 *   **GatewayService**：定義在 `pkg/service/gateway.go`。
     *   方法：`Broadcast(gameCode, event)`、`SendToUser(userID, gameCode, event)`。
     *   用途：GMS 和 GS 都使用此介面向 Gateway 發送訊息。
-    *   實作：
-        *   **單體架構**：包裝 WebSocket manager 的本地適配器。
-        *   **微服務架構**：gRPC 客戶端或 Redis Pub/Sub 發布者。
+    *   **實作**:
+    *   **單體架構**: `LocalAdapter` - 直接包裝 WebSocket manager 進行本地調用。
+    *   **微服務架構**: `GRPCAdapter` - 使用 **gRPC Fan-out** 機制，直接向所有發現的 Gateway 實例發送消息（不使用 Redis Pub/Sub）。
 
 ## Clean Architecture（整潔架構）
 *   **分層**：
-    *   **Domain**：實體和業務規則。純 Go 結構體，無外部依賴。
+    *   **Domain**: 實體和業務規則。純 Go 結構體，**無基礎設施依賴**（但可依賴 `shared/proto` 作為核心契約）。
     *   **UseCase**：應用程式業務邏輯。依賴 Domain 和介面。
-    *   **Adapter**：介面的實作（Repositories、Services、Handlers）。依賴外部函式庫（GORM、Redis、Gin、gRPC）。
+    *   **Adapter (適配器層)**: 負責協議轉換與外部交互，主要對應專案中的 `adapter/` 目錄。其核心價值在於**隔離業務邏輯與部署架構**：
+        *   **HTTP/gRPC Servers**: 將外部請求解析後，調用 UseCase。
+        *   **Service Implementation**: 實作 `pkg/service` 定義的介面。透過不同的 Adapter 實作，我們能在不修改業務邏輯的情況下切換架構：
+            *   **Monolith**: 實作本地調用（Local Adapter），直接在內存中交互。
+            *   **Microservices**: 實作遠端調用（gRPC Adapter），透過網絡交互。
     *   **Infrastructure**：框架和驅動程式。本專案中主要體現在 `cmd/` 下的 `main.go` (Composition Root)，負責依賴注入、配置加載、DB 連接與服務啟動。
 
 ## 單體與微服務混合架構
-*   程式碼庫設計為同時支援單體和微服務部署。
-*   **適配器**：我們使用適配器在本地方法呼叫（單體）和遠端呼叫（gRPC/Redis）之間切換，而無需更改業務邏輯。
+本專案的代碼庫設計為同時支援單體和微服務兩種部署模式，其核心在於**依賴注入 (DI)** 與 **介面抽象**。
 
-## Adapter 層設計原則
+*   **統一介面 (pkg/service)**: 所有跨模組的交互（如 GMS -> Gateway, GMS -> User）都定義在 `pkg/service` 介面中。業務邏輯（UseCase）只依賴這些介面。
+*   **靈活切換 (Composition Root)**: 在 `main.go` 中根據部署模式注入不同的實作：
+    *   **單體模式**: 直接注入目標模組的 UseCase 或 Service 實例。調用是**進程內 (In-Process)** 的函數調用，零網絡開銷。
+    *   **微服務模式**: 注入 `pkg/grpc_client` (gRPC Client)。調用會被序列化並通過網絡發送到遠端服務。
 
-### Adapter 的職責
-*   **介面實作**：Adapter 層負責實作 Domain 和 Service 介面。
-*   **技術細節隔離**：將外部技術（資料庫、訊息佇列、HTTP、gRPC）的細節封裝在 Adapter 中。
-*   **依賴反轉**：UseCase 依賴介面，Adapter 實作介面，實現依賴反轉原則（DIP）。
+## Adapter 代碼結構對照 (Code Map)
 
-### Adapter 的類型
+以下是各類型 Adapter 在專案中的具體位置：
 
-#### 1. Repository Adapter
-*   **位置**：`internal/modules/<module>/repository/`
-*   **職責**：實作 Domain 中定義的 Repository 介面，處理資料持久化。
-*   **範例**：
-    *   `db/bet_repository.go`：使用 GORM 實作 `BetRepository`
-    *   `redis/bet_repository.go`：使用 Redis 實作 `BetRepository`
-    *   `memory/bet_repository.go`：使用記憶體實作 `BetRepository`（用於測試）
+1.  **HTTP/gRPC Handlers (Inbound)**
+    *   **位置**: `internal/modules/<module>/adapter/http/` 或 `grpc/`
+    *   **職責**: 處理外部請求，調用 UseCase。
 
-#### 2. Service Adapter (Local)
-*   **位置**：`internal/modules/<module>/adapter/local/`
-*   **職責**：實作 `pkg/service` 中定義的介面，用於單體架構中的本地方法呼叫。
-*   **範例**：
-    *   `gs/adapter/local/handler.go`：實作 `ColorGameService` 和 `GSBroadcaster`
-    *   `gms/adapter/local/handler.go`：實作 `GMSService`
-*   **特點**：直接呼叫 UseCase 方法，無網路開銷。
+2.  **Repositories (Outbound)**
+    *   **位置**: `internal/modules/<module>/repository/`
+    *   **職責**: 實作 Domain Repository 介面 (CRUD)。
 
-#### 3. Service Adapter (gRPC)
-*   **位置**：`internal/modules/<module>/adapter/grpc/`
-*   **職責**：
-    *   **Server 端**：實作 gRPC 服務介面，接收遠端請求並呼叫 UseCase。
-    *   **Client 端**：實作 `pkg/service` 介面，透過 gRPC 呼叫遠端服務。
-*   **範例**：
-    *   `gs/adapter/grpc/handler.go`：gRPC Server，實作 `ColorGameServiceServer`
-    *   `gs/adapter/grpc/client.go`：gRPC Client，實作 `service.ColorGameService`
+3.  **Service Clients (Outbound/Service Impl)**
+    *   **位置 (Local)**: `internal/modules/<module>/adapter/local/` (實作本地直接調用)
+    *   **位置 (Remote)**: `pkg/grpc_client/`
+    *   **職責**: 實作 `pkg/service` 介面，用於模組間通訊。
 
-#### 4. Gateway Adapter
-*   **位置**：`internal/modules/gateway/adapter/`
-*   **職責**：處理外部通訊協定（HTTP、WebSocket）。
-*   **範例**：
-    *   `http/handler.go`：處理 HTTP 請求
-    *   `local/broadcaster.go`：實作 `service.GatewayService`，透過 WebSocket 廣播訊息
-
-### Adapter 設計準則
-
-1.  **單一職責**：每個 Adapter 只負責一種技術實作（例如：GORM、Redis、gRPC）。
-2.  **可替換性**：同一個介面可以有多個 Adapter 實作，可以根據部署模式（單體/微服務）或環境（開發/生產）選擇不同的實作。
-3.  **錯誤轉換**：Adapter 應該將外部錯誤（如資料庫錯誤、網路錯誤）轉換為 Domain 錯誤或標準錯誤。
-4.  **資料轉換**：Adapter 負責在外部資料格式（如 Protobuf、JSON、資料庫模型）和 Domain 實體之間進行轉換。
-5.  **無業務邏輯**：Adapter 不應包含業務邏輯，業務邏輯應該在 UseCase 層。
-6.  **命名規範**：所有 Adapter 實作統一命名為 `Handler`（例如：`local/handler.go`、`grpc/handler.go`），保持一致性。
 
 ### Adapter 選擇策略
 
-*   **單體模式**：使用 Local Adapter，所有模組在同一個進程中，透過方法呼叫通訊。
-*   **微服務模式**：使用 gRPC Adapter，模組分佈在不同的服務中，透過網路通訊。
-*   **測試模式**：使用 Memory Adapter 或 Mock，快速測試業務邏輯，無需外部依賴。
+1.  **單體模式 (Monolith)**：
+    *   **Adapter**: `LocalAdapter` (直接調用 Service/UseCase)。
+    *   **場景**: 單機高併發部署、開發調試。
+    *   **優勢**: **最高效能**。完全沒有網絡序列化/反序列化開銷 (Zero-Copy)，延遲最低。
+
+2.  **微服務模式 (Microservices)**：
+    *   **Adapter**: `gRPCAdapter` (Client)。
+    *   **場景**: 大規模集群部署、跨團隊開發。
+    *   **優勢**: **可擴展性**。支援水平擴展，故障隔離。
 
 ---
 
@@ -105,20 +87,32 @@
     *   **數據轉換**: GMS 發送 Protobuf `Any` 類型，Gateway 的 gRPC Handler 負責將其轉換為前端需要的 JSON 格式 (`{"command": "...", "data": ...}`)。
 
 ### 2. 服務發現與路由 (Service Discovery & Routing)
-**原則**：客戶端負載均衡 (Client-side Load Balancing) 配合 TTL 緩存，以減少對註冊中心的壓力。
 
+*   **機制**: 客戶端負載均衡 (Client-side Load Balancing) 配合 **主動訂閱 (Subscription)**。
+*   **流程**:
+    1.  **Subscribe**: 客戶端首次訪問服務時，向 Nacos 註冊監聽 (Watcher)。
+    2.  **Push Update**: 當服務實例變更（上下線）時，Nacos 主動推送最新列表。
+    3.  **Jittered Update**: 客戶端收到推送後，隨機延遲 **0-3秒** 更新本地緩存。這防止了大規模集群在同一時刻並發更新導致的潛在鎖競爭或 CPU 峰值。
+*   **優勢**:
+    *   **實時性**: 秒級感知服務變更。
+    *   **低開銷**: 平時無需輪詢，僅在變更時觸發。
+*   **負載均衡策略**:
+    *   **現狀**: **隨機 (Random)**。
+    *   **擴展性**: 由於我們獲取了完整實例列表，未來可在客戶端輕鬆實作 **加權隨機 (Weighted Random)** 或 **輪詢 (Round Robin)** 算法。
 *   **註冊中心**: Nacos。
 *   **客戶端實現**: `pkg/grpc_client/base/client.go`。
-*   **TTL 機制**: 客戶端緩存服務實例地址 **10秒**。過期後自動異步更新。
-*   **負載均衡**: 隨機選擇 (Random)。
 
-### 3. Gateway 的雙重角色 (Dual Role of Gateway)
-Gateway 模組的行為取決於部署模式：
+### 3. Gateway 的定位 (Gateway Role)
+Gateway 是系統的**接入層 (Access Layer)**，也是唯一的 WebSocket 入口。它**不包含**核心遊戲業務邏輯。
 
-*   **單體模式**: 作為一個 **Adapter**，它包含並運行其他模組 (GS, GMS) 的各個部分（透過 Local Adapters）。
-*   **微服務模式**: 作為一個 **Pure Proxy (純代理)**。
-    *   **無業務邏輯**: 不初始化與 Color Game 相關的 UseCase 或 Repository。
-    *   **職責**: 僅負責維護 WebSocket 連接和轉發 gRPC 請求/廣播。
+*   **核心職責**:
+    1.  **連接管理**: 維護大量 WebSocket 長連接 (Stateful)。
+    2.  **消息路由**:
+        *   **Inbound**: 接收客戶端指令，透過 `pkg/service` 介面轉發給對應的業務模組 (GS, GMS, User)。
+        *   **Outbound**: 接收業務模組的廣播請求，精準推送給前端客戶端。
+*   **架構行為**:
+    *   **單體模式**: 系統啟動時注入 **Local Adapter**。Gateway 直接調用同進程內的 GS/GMS 方法 (In-Process)。
+    *   **微服務模式**: 系統啟動時注入 **gRPC Client**。Gateway 透過網路調用遠端的 GS/GMS 服務。
 
 ### 4. 服務生命週期管理 (Service Lifecycle Management)
 
@@ -141,8 +135,9 @@ Gateway 模組的行為取決於部署模式：
     *   調用 `StateMachine.GracefulShutdown()`。
     *   對於週期性任務（如遊戲回合），必須採用 **Wait-For-Completion** 策略：等待當前週期（Round）完整結束後再退出。
     *   嚴禁在業務邏輯執行到一半時（如 Betting 階段）強制中斷。
-4.  **Force Kill Protection (超時強制殺)**:
-    *   如果上述過程超過預設時間（如 30s），必須有強制退出的機制，防止進程僵死。
+4.  **Task-Specific Timeout (任務級超時保護)**:
+    *   針對關鍵業務（如 GMS 狀態機結算、GS 訂單處理），必須設定明確的**業務超時時間**（例如狀態機可能允許 30s 完成當前局，而普通請求僅允許 5s）。
+    *   若超過此時間仍未完成，系統應記錄錯誤並強制釋放資源（或執行緊急保存），防止進程僵死導致部署卡住。
 
 ### 5. 通訊協議與高性能設計 (Communication & Performance)
 
@@ -160,11 +155,5 @@ Gateway 模組的行為取決於部署模式：
         *   在狀態廣播場景（GMS -> Gateways），我們沒有使用 gRPC Streaming，而是採用了**應用層扇出 (Fan-out)**。
         *   **機制**: GMS 從 Nacos 獲取所有健康的 Gateway IP，並行發送 Unary `Broadcast` 請求。
         *   **優勢**: 比起 Redis Pub/Sub，這種方式**可控性更强**（明確知道發給了誰，失敗可以重試）且**延遲更低**（少了一跳 Redis）。
+    *   **直連架構 (Direct Connection)**: 結合客戶端服務發現，內部服務間通訊 (Service-to-Service) 採用 **P2P 直連模式**，不經過任何中間代理（如 Nginx）。這消除了單點瓶頸，並顯著降低網絡跳數 (Network Hops) 與延遲。
 
-3.  **去中心化負載均衡 (Client-Side Load Balancing)**:
-    *   我們不使用中心化的 L7 LB（如 Nginx/Istio）來轉發內部 gRPC 流量。
-    *   **機制**: 每個服務（Client）定期從 Nacos 拉取目標服務實例列表，並在本地進行隨機負載均衡。
-    *   **優勢**:
-        *   消除單點瓶頸。
-        *   減少一跳網絡延遲 (Direct Pod-to-Pod communication)。
-        *   配合 Nacos 實現快速的實例上下線感知。

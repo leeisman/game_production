@@ -14,6 +14,9 @@ type Registry interface {
 	// GetServices gets all healthy service instance addresses
 	GetServices(serviceName string) ([]string, error)
 
+	// Subscribe subscribes to service changes
+	Subscribe(serviceName string, callback func(services []string)) error
+
 	// Close closes the registry client
 	Close() error
 }
