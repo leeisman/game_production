@@ -51,15 +51,24 @@ We use a **gRPC Fan-out** pattern for delivering game state changes to clients:
     *   gRPC Services: Random ports (registered to Nacos).
 
 ### 2.4 Graceful Shutdown Strategy
+To ensure zero downtime and data integrity (especially for game rounds and settlements):
 
-To ensure zero downtime and data integrity during deployments:
+**Principles**:
+1.  **Stop Ingress First**: Cut off new traffic before stopping core logic.
+2.  **Wait-For-Completion**: Core logic (State Machine, Settlements) must finish the current unit of work.
 
-*   **GMS Shutdown Sequence**:
-    1.  Receive `SIGINT`/`SIGTERM`.
-    2.  `cancel()` context to immediately interrupt State Machine sleeps/waits.
-    3.  Call `stateMachine.Stop()` to set stopping flag.
-    4.  Call `grpcServer.GracefulStop()` with a **5-second timeout**. If it hangs, force stop.
-    5.  Deregister from Nacos.
+**Shutdown Sequences**:
+
+*   **GMS (Game Management Service)**:
+    1.  **Deregister**: Stop Nacos discovery.
+    2.  **Stop gRPC**: `GracefulStop` (stop accepting new requests).
+    3.  **Stop StateMachine**: Set flag and **Wait** for current round to finish (`GAME_STATE_ROUND_ENDED`).
+    4.  **Timeout**: Force kill if stuck > 30s.
+
+*   **GS (Game Service)**:
+    1.  **Deregister**: Stop Nacos discovery.
+    2.  **Stop gRPC**: `GracefulStop` waits for all active RPCs (including `SettleRound` batch processing) to complete.
+    3.  **Timeout**: Force kill if stuck > 30s.
 
 ---
 
