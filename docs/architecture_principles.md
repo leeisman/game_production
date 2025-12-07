@@ -143,3 +143,28 @@ Gateway 模組的行為取決於部署模式：
     *   嚴禁在業務邏輯執行到一半時（如 Betting 階段）強制中斷。
 4.  **Force Kill Protection (超時強制殺)**:
     *   如果上述過程超過預設時間（如 30s），必須有強制退出的機制，防止進程僵死。
+
+### 5. 通訊協議與高性能設計 (Communication & Performance)
+
+#### gRPC 模式與效能優勢
+
+本專案在微服務間通訊全面採用 **gRPC**，而非 HTTP/REST，主要考量如下：
+
+1.  **Protobuf 二進制序列化**:
+    *   **效能**: 相比 JSON，Protobuf 序列化後體積更小（減少 30-50% 頻寬），編解碼速度快一個數量級。這對於**高頻下注**和**毫秒級狀態同步**至關重要。
+    *   **類型安全**: 強類型的 `.proto` 定義，在編譯期就能發現接口不兼容問題。
+
+2.  **通訊模式**:
+    *   **Unary Call (一對一)**: 用於大多數業務請求（如 `PlaceBet`, `Login`）。簡單可靠，易於負載均衡。
+    *   **Application-Level Fan-out (一對多廣播)**:
+        *   在狀態廣播場景（GMS -> Gateways），我們沒有使用 gRPC Streaming，而是採用了**應用層扇出 (Fan-out)**。
+        *   **機制**: GMS 從 Nacos 獲取所有健康的 Gateway IP，並行發送 Unary `Broadcast` 請求。
+        *   **優勢**: 比起 Redis Pub/Sub，這種方式**可控性更强**（明確知道發給了誰，失敗可以重試）且**延遲更低**（少了一跳 Redis）。
+
+3.  **去中心化負載均衡 (Client-Side Load Balancing)**:
+    *   我們不使用中心化的 L7 LB（如 Nginx/Istio）來轉發內部 gRPC 流量。
+    *   **機制**: 每個服務（Client）定期從 Nacos 拉取目標服務實例列表，並在本地進行隨機負載均衡。
+    *   **優勢**:
+        *   消除單點瓶頸。
+        *   減少一跳網絡延遲 (Direct Pod-to-Pod communication)。
+        *   配合 Nacos 實現快速的實例上下線感知。
