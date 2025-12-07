@@ -138,3 +138,18 @@ stateMachine.DrawingDuration = 3 * time.Second   // 開獎 3 秒
 stateMachine.ResultDuration = 10 * time.Second   // 結果顯示 10 秒
 stateMachine.RestDuration = 5 * time.Second      // 休息 5 秒
 ```
+
+### 1.7 安全關機機制 (Graceful Shutdown)
+
+GMS 採用了 **"Wait-For-Round-Completion"** 策略來確保服務重啟或關閉時的數據完整性。
+
+*   **問題**: 如果在 `GAME_STATE_BETTING` 期間強制殺掉進程，會導致該回合下注數據不完整，或者結算邏輯未能執行。
+*   **解決方案**:
+    1.  收到 Shutdown 信號 (SIGINT/SIGTERM)。
+    2.  GMS 標記 `stopping = true`。
+    3.  狀態機**繼續執行**直到當前回合結束 (走到 `GAME_STATE_ROUND_ENDED`)。
+    4.  狀態機發送 `GAME_STATE_STOPPED` 事件並退出。
+    5.  主進程收到退出信號後才關閉 gRPC 服務。
+*   **超時保護**: 如果狀態機卡住或回合時間過長（超過 30 秒），主進程會強制觸發 Context Cancellation 進行硬關閉。
+
+這種機制保證了每一局遊戲都是完整的，不會因為服務重啟而出現「爛尾」的回合。
