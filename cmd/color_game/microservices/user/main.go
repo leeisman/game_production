@@ -117,9 +117,8 @@ func main() {
 	<-quit
 	logger.InfoGlobal().Msg("🛑 Shutting down server...")
 
-	// Deregister from Nacos
-	if nacosClient != nil {
-		nacosClient.DeregisterService(cfg.Server.Name, ip, uint64(actualPort))
-		logger.InfoGlobal().Msg("✅ Deregistered from Nacos")
-	}
+	nacosClient.DeregisterService(cfg.Server.Name, ip, uint64(actualPort))
+	logger.InfoGlobal().Msg("✅ Deregistered from Nacos")
+
+	logger.InfoGlobal().Msg("👋 User shutdown complete")
 }
