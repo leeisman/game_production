@@ -26,7 +26,7 @@
     *   **Domain**：實體和業務規則。純 Go 結構體，無外部依賴。
     *   **UseCase**：應用程式業務邏輯。依賴 Domain 和介面。
     *   **Adapter**：介面的實作（Repositories、Services、Handlers）。依賴外部函式庫（GORM、Redis、Gin、gRPC）。
-    *   **Infrastructure**：框架和驅動程式（Main、Config、DB 連接）。
+    *   **Infrastructure**：框架和驅動程式。本專案中主要體現在 `cmd/` 下的 `main.go` (Composition Root)，負責依賴注入、配置加載、DB 連接與服務啟動。
 
 ## 單體與微服務混合架構
 *   程式碼庫設計為同時支援單體和微服務部署。
@@ -87,3 +87,59 @@
 *   **單體模式**：使用 Local Adapter，所有模組在同一個進程中，透過方法呼叫通訊。
 *   **微服務模式**：使用 gRPC Adapter，模組分佈在不同的服務中，透過網路通訊。
 *   **測試模式**：使用 Memory Adapter 或 Mock，快速測試業務邏輯，無需外部依賴。
+
+---
+
+## 關鍵架構決策 (Key Architectural Decisions)
+
+### 1. 事件廣播策略 (Event Broadcasting)
+**原則**：事件廣播機制必須根據部署模式進行適配，且**不依賴 Redis Pub/Sub** 作為核心廣播手段。
+
+*   **單體模式**:
+    *   **機制**: 直接方法調用 (Direct Method Call)。
+    *   **路徑**: `GMS -> LocalHandler -> WebSocketManager -> Clients`。
+    *   **優點**: 極低延遲，無序列化開銷。
+*   **微服務模式**:
+    *   **機制**: **gRPC Fan-out**。
+    *   **路徑**: `GMS -> BaseClient (Discovery) -> gRPC Broadcast (All Gateways) -> WebSocketManager -> Clients`。
+    *   **數據轉換**: GMS 發送 Protobuf `Any` 類型，Gateway 的 gRPC Handler 負責將其轉換為前端需要的 JSON 格式 (`{"command": "...", "data": ...}`)。
+
+### 2. 服務發現與路由 (Service Discovery & Routing)
+**原則**：客戶端負載均衡 (Client-side Load Balancing) 配合 TTL 緩存，以減少對註冊中心的壓力。
+
+*   **註冊中心**: Nacos。
+*   **客戶端實現**: `pkg/grpc_client/base/client.go`。
+*   **TTL 機制**: 客戶端緩存服務實例地址 **10秒**。過期後自動異步更新。
+*   **負載均衡**: 隨機選擇 (Random)。
+
+### 3. Gateway 的雙重角色 (Dual Role of Gateway)
+Gateway 模組的行為取決於部署模式：
+
+*   **單體模式**: 作為一個 **Adapter**，它包含並運行其他模組 (GS, GMS) 的各個部分（透過 Local Adapters）。
+*   **微服務模式**: 作為一個 **Pure Proxy (純代理)**。
+    *   **無業務邏輯**: 不初始化與 Color Game 相關的 UseCase 或 Repository。
+    *   **職責**: 僅負責維護 WebSocket 連接和轉發 gRPC 請求/廣播。
+
+### 4. 服務生命週期管理 (Service Lifecycle Management)
+
+#### 優雅關機（Graceful Shutdown）原則
+
+為了保證數據完整性和用戶體驗，所有有狀態服務（Stateful Services）必須遵循嚴格的關機順序。
+
+**核心法則：先關門，再熄火 (Stop Ingress, then Stop Core)**
+
+錯誤的順序會導致 "上車後沒司機" 的情況：即請求進入了服務，但內部的核心邏輯（如狀態機）已經停止，導致請求失敗或狀態不一致。
+
+**推薦的關機序列**:
+
+1.  **Deregister (下線服務發現)**:
+    *   從 Nacos/Consul 註銷，停止負載均衡器將新流量導向本節點。
+2.  **Stop Ingress (關閉入口)**:
+    *   調用 `grpcServer.GracefulStop()` 或 `httpServer.Shutdown()`。
+    *   這一步會拒絕新的連接，但會**等待**已建立連接上的請求（如結算、下注）處理完畢。
+3.  **Stop Core Logic (關閉核心邏輯)**:
+    *   調用 `StateMachine.GracefulShutdown()`。
+    *   對於週期性任務（如遊戲回合），必須採用 **Wait-For-Completion** 策略：等待當前週期（Round）完整結束後再退出。
+    *   嚴禁在業務邏輯執行到一半時（如 Betting 階段）強制中斷。
+4.  **Force Kill Protection (超時強制殺)**:
+    *   如果上述過程超過預設時間（如 30s），必須有強制退出的機制，防止進程僵死。
