@@ -28,8 +28,8 @@ import (
 
 func main() {
 	logger.Init(logger.Config{
-		Level:  "debug",
-		Format: "console",
+		Level:  "info",
+		Format: "json",
 	})
 
 	logger.InfoGlobal().Msg("🎰 Starting Color Game GMS (Game Management Service)...")
@@ -72,8 +72,7 @@ func main() {
 
 	// 7. Initialize State Machine
 	stateMachine := colorgameGMSMachine.NewStateMachine()
-	ctx, cancel := context.WithCancel(context.Background())
-	go stateMachine.Start(ctx)
+	go stateMachine.Start(context.Background())
 	logger.InfoGlobal().Msg("✅ State machine started")
 
 	// 8. Initialize Repository
@@ -128,32 +127,35 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	logger.InfoGlobal().Msg("🛑 Shutting down GMS...")
+	logger.InfoGlobal().Msg("🛑 Shutting down GMS (Waiting for current round to finish)...")
 
-	// 1. Cancel State Machine Context (This should interrupt sleeps)
-	cancel()
+	// 1. Deregister from Nacos first (Stop traffic)
+	nacosClient.DeregisterService(serviceName, ip, uint64(actualPort))
+	logger.InfoGlobal().Msg("✅ Deregistered from Nacos")
 
-	// 2. Stop State Machine (Wait for current phase to finish)
-	stateMachine.Stop()
-
-	// 3. Stop gRPC Server (with timeout)
+	// 2. Stop gRPC Server (Wait for pending requests)
 	logger.InfoGlobal().Msg("🛑 Stopping gRPC Server...")
-	stopped := make(chan struct{})
+	grpcStopped := make(chan struct{})
 	go func() {
 		grpcServer.GracefulStop()
-		close(stopped)
+		close(grpcStopped)
 	}()
 
 	select {
-	case <-stopped:
+	case <-grpcStopped:
 		logger.InfoGlobal().Msg("✅ gRPC Server stopped gracefully")
 	case <-time.After(5 * time.Second):
 		logger.WarnGlobal().Msg("⚠️ gRPC Server stop timed out, forcing Stop")
 		grpcServer.Stop()
 	}
 
-	// 4. Deregister from Nacos
-	nacosClient.DeregisterService(serviceName, ip, uint64(actualPort))
+	// 3. Stop State Machine (Wait for current round to finish)
+	// Now safe to stop because no new requests are coming in
+	if err := stateMachine.GracefulShutdown(30 * time.Second); err != nil {
+		logger.WarnGlobal().Err(err).Msg("⚠️ State Machine shutdown timed out (forced exit)")
+	} else {
+		logger.InfoGlobal().Msg("✅ State Machine stopped gracefully")
+	}
 
 	logger.InfoGlobal().Msg("✅ GMS shutdown complete")
 }
