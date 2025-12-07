@@ -8,7 +8,6 @@ import (
 	_ "net/http/pprof" // Register pprof handlers
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -132,12 +131,7 @@ func main() {
 
 	// 1. Initialize GMS (Game Machine Service) with broadcaster
 	stateMachine := colorgameGMSMachine.NewStateMachine()
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		stateMachine.Start(context.Background())
-	}()
+	go stateMachine.Start(context.Background())
 	logger.InfoGlobal().Msg("  ✅ State machine started")
 
 	gameRoundRepo := colorgameGMSRepo.NewGameRoundRepository(db)
@@ -257,7 +251,19 @@ func main() {
 	// 6.2 Stop State Machine (wait for current round to finish)
 	logger.InfoGlobal().Msg("⏳ Waiting for current round to finish...")
 	stateMachine.Stop()
-	wg.Wait()
+
+	done := make(chan struct{})
+	go func() {
+		stateMachine.WaitForDone()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		logger.InfoGlobal().Msg("✅ State Machine stopped gracefully")
+	case <-time.After(30 * time.Second):
+		logger.WarnGlobal().Msg("⚠️ State Machine stop timed out (30s), forcing exit")
+	}
 
 	// 6.3 Shutdown Gateway (close all WebSocket connections)
 	logger.InfoGlobal().Msg("🔌 Closing all WebSocket connections...")
