@@ -18,11 +18,13 @@ import (
 	colorgameGMSMachine "github.com/frankieli/game_product/internal/modules/color_game/gms/machine"
 	colorgameGMSRepo "github.com/frankieli/game_product/internal/modules/color_game/gms/repository/db"
 	colorgameGMSUseCase "github.com/frankieli/game_product/internal/modules/color_game/gms/usecase"
+	"github.com/frankieli/game_product/pkg/admin"
 	"github.com/frankieli/game_product/pkg/discovery"
 	"github.com/frankieli/game_product/pkg/grpc_client/base"
 	"github.com/frankieli/game_product/pkg/grpc_client/color_game"
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/frankieli/game_product/pkg/netutil"
+	pbAdmin "github.com/frankieli/game_product/shared/proto/admin"
 	pb "github.com/frankieli/game_product/shared/proto/colorgame"
 	"github.com/redis/go-redis/v9"
 )
@@ -94,6 +96,7 @@ func main() {
 	gmsGrpcHandler := colorgameGMSGrpc.NewHandler(gmsUC)
 	// Register GMS service
 	pb.RegisterColorGameGMSServiceServer(grpcServer, gmsGrpcHandler)
+	pbAdmin.RegisterAdminServiceServer(grpcServer, admin.NewServer())
 
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {

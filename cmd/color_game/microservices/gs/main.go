@@ -19,11 +19,13 @@ import (
 	colorgameGSMemory "github.com/frankieli/game_product/internal/modules/color_game/gs/repository/memory"
 	colorgameGSUseCase "github.com/frankieli/game_product/internal/modules/color_game/gs/usecase"
 	walletModule "github.com/frankieli/game_product/internal/modules/wallet"
+	"github.com/frankieli/game_product/pkg/admin"
 	"github.com/frankieli/game_product/pkg/discovery"
 	"github.com/frankieli/game_product/pkg/grpc_client/base"
 	"github.com/frankieli/game_product/pkg/grpc_client/color_game"
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/frankieli/game_product/pkg/netutil"
+	pbAdmin "github.com/frankieli/game_product/shared/proto/admin"
 	pb "github.com/frankieli/game_product/shared/proto/colorgame"
 )
 
@@ -98,6 +100,7 @@ func main() {
 	grpcServer := grpc.NewServer()
 	gsGrpcHandler := colorgameGSGrpc.NewHandler(gsUC)
 	pb.RegisterColorGameGSServiceServer(grpcServer, gsGrpcHandler)
+	pbAdmin.RegisterAdminServiceServer(grpcServer, admin.NewServer())
 
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {

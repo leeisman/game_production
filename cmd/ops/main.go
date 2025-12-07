@@ -3,11 +3,19 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
+	"net/http/httputil"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/frankieli/game_product/pkg/discovery"
@@ -28,9 +36,9 @@ var staticFS embed.FS
 type ProjectConfig struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	NacosHost string `json:"-"`
-	NacosPort string `json:"-"`
-	Namespace string `json:"-"`
+	NacosHost string `json:"nacos_host"`
+	NacosPort string `json:"nacos_port"`
+	Namespace string `json:"namespace"`
 }
 
 type ProjectContext struct {
@@ -39,28 +47,28 @@ type ProjectContext struct {
 	CGClient *color_game.Client // Contains BaseClient internally
 }
 
+// Global Registry
 var (
-	projects    = make(map[string]*ProjectContext)
-	projectList = []ProjectConfig{} // For frontend listing
+	projects       = make(map[string]*ProjectContext)
+	projectList    = []ProjectConfig{} // For frontend listing
+	methodRegistry map[string]GenericHandler
 )
 
 // GenericHandler now accepts the project context
 type GenericHandler func(ctx context.Context, p *ProjectContext, payload []byte) (interface{}, error)
 
-var methodRegistry map[string]GenericHandler
-
 func main() {
-	logger.Init(logger.Config{
-		Level:  "debug",
-		Format: "console",
-	})
+	// 1. Initialize Global Logger
+	logger.InitWithFile("logs/ops/server.log", "info", "json", true)
+	logger.InfoGlobal().Msg("🚀 Starting OPS Center Backend...")
 
-	// 1. Initialize Multi-Project Configuration
+	// 2. Initialize Projects & Clients
 	initProjects()
-
-	// 2. Initialize Method Registry
 	initRegistry()
+	startPprofCleanupMonitor()
 
+	// 3. Setup Gin Router
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
 	// 3. Serve Frontend Assets
@@ -91,6 +99,19 @@ func main() {
 
 		// RPC Call (payload contains project)
 		api.POST("/grpc_call", handleGenericCall)
+
+
+		// Performance Profiling
+		api.POST("/performance/record", handleRecordPerformance)
+		api.GET("/performance/history", handleListPerformanceHistory)
+		api.DELETE("/performance/history", handleDeletePerformanceHistory)
+		
+		// Full Web UI Proxy (go tool pprof -http)
+		// /api/performance/ui/:key/*path
+		api.Any("/performance/ui/:key/*path", handlePprofProxy)
+		
+		// Serve downloaded profiles
+		api.Static("/performance/download", "./storage/pprof")
 	}
 
 	// 5. SPA Catch-all
@@ -250,8 +271,419 @@ func handleGenericCall(c *gin.Context) {
 	c.JSON(200, result)
 }
 
+func handleRecordPerformance(c *gin.Context) {
+	var body struct {
+		Project  string `json:"project"`
+		Service  string `json:"service"`
+		Instance string `json:"instance"` // Optional: specific ip:port
+		Duration int32  `json:"duration"`
+	}
+
+	if err := c.BindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	p, err := getProjectContext(body.Project)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Default duration 30s
+	if body.Duration <= 0 {
+		body.Duration = 30
+	}
+	if body.Duration > 600 { // Max 10 mins
+		body.Duration = 600
+	}
+
+	// Call RPC (long running)
+	// Timeout should be duration + buffer (e.g. 10s overhead)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(body.Duration+10)*time.Second)
+	defer cancel()
+
+	logger.InfoGlobal().Msgf("Starting performance collection for %s (Inst: %s) duration %ds", body.Service, body.Instance, body.Duration)
+
+	resp, err := p.CGClient.CollectPerformance(ctx, body.Service, body.Instance, body.Duration)
+	if err != nil {
+		logger.ErrorGlobal().Err(err).Msg("CollectPerformance RPC failed")
+		c.JSON(500, gin.H{"error": fmt.Sprintf("RPC failed: %v", err)})
+		return
+	}
+
+	// Save files
+	timestamp := time.Now().Unix()
+	// Sanitize Instance IP for folder name (replace : with -)
+	safeInstance := strings.ReplaceAll(body.Instance, ":", "-")
+	if safeInstance == "" {
+		safeInstance = "unknown"
+	}
+	
+	// Folder format: {timestamp}__{service}__{instance}
+	baseDir := fmt.Sprintf("./storage/pprof/%d__%s__%s", timestamp, body.Service, safeInstance)
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to create storage dir"})
+		return
+	}
+
+	// Helper to write file
+	writeFile := func(name string, data []byte) string {
+		if len(data) == 0 {
+			return ""
+		}
+		path := filepath.Join(baseDir, name)
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			logger.WarnGlobal().Err(err).Msgf("Failed to write file %s", name)
+			return ""
+		}
+		// Return relative path for download URL: "timestamp__service__instance/filename"
+		return fmt.Sprintf("%d__%s__%s/%s", timestamp, body.Service, safeInstance, name)
+	}
+
+	files := gin.H{
+		"cpu":       writeFile("cpu.prof", resp.CpuProfile),
+		"trace":     writeFile("trace.out", resp.TraceData),
+		"heap":      writeFile("heap.prof", resp.HeapSnapshot),
+		"goroutine": writeFile("goroutine.prof", resp.GoroutineDump),
+	}
+
+	c.JSON(200, gin.H{
+		"success":      true,
+		"timestamp":    timestamp,
+		"service_name": body.Service,
+		"instance":     body.Instance,
+		"files":        files,
+	})
+}
+
+func handleListPerformanceHistory(c *gin.Context) {
+	baseDir := "./storage/pprof"
+	// Ensure dir exists
+	os.MkdirAll(baseDir, 0755)
+
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to list directory"})
+		return
+	}
+
+	type HistoryItem struct {
+		Folder      string `json:"folder"`
+		Timestamp   int64  `json:"timestamp"`
+		ServiceName string `json:"service_name"`
+		Instance    string `json:"instance"`
+		Files       gin.H  `json:"files"`
+	}
+	history := []HistoryItem{}
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Parse name: "TIMESTAMP__SERVICE__INSTANCE"
+		// or legacy "TIMESTAMP__SERVICE"
+		parts := strings.Split(name, "__")
+		if len(parts) < 2 {
+			continue
+		}
+		ts, _ := strconv.ParseInt(parts[0], 10, 64)
+		service := parts[1]
+		instance := "unknown"
+		if len(parts) >= 3 {
+			instance = strings.ReplaceAll(parts[2], "-", ":")
+		}
+
+		// Check files inside
+		files := gin.H{}
+		subEntries, _ := os.ReadDir(filepath.Join(baseDir, name))
+		for _, f := range subEntries {
+			if !f.IsDir() {
+				// e.g. "cpu.prof" -> url: "folder/cpu.prof"
+				key := strings.TrimSuffix(f.Name(), filepath.Ext(f.Name())) // "cpu"
+				// Handle "trace.out"
+				if f.Name() == "trace.out" {
+					key = "trace"
+				}
+				files[key] = fmt.Sprintf("%s/%s", name, f.Name())
+			}
+		}
+
+		history = append(history, HistoryItem{
+			Folder:      name,
+			Timestamp:   ts,
+			ServiceName: service,
+			Instance:    instance,
+			Files:       files,
+		})
+	}
+	
+	c.JSON(200, history)
+}
+
+// --- Pprof Proxy Manager ---
+
+type PprofSession struct {
+	Port       int
+	Cmd        *exec.Cmd
+	LastAccess time.Time
+}
+
+var (
+	pprofSessions = make(map[string]*PprofSession) // Key: "folder/filename"
+	pprofMutex    sync.Mutex
+)
+
+// GetOrStartPprofSession returns the port for a pprof web server
+func GetOrStartPprofSession(targetPath string) (int, error) {
+	pprofMutex.Lock()
+	defer pprofMutex.Unlock()
+
+	// 1. cleaning up old sessions (mock LRU: random cleanup if too many?)
+	// For now simple cleanup: if process died, remove it.
+	for k, s := range pprofSessions {
+		if s.Cmd.ProcessState != nil && s.Cmd.ProcessState.Exited() {
+			delete(pprofSessions, k)
+		}
+	}
+
+	// 2. Check existing
+	if s, ok := pprofSessions[targetPath]; ok {
+		s.LastAccess = time.Now()
+		// Check if port is still listening?
+		// Assuming yes if process is running.
+		return s.Port, nil
+	}
+
+	// 3. LRU Eviction: Limit concurrent sessions
+	// User requested "close previous on new open", so we keep this limit tight (e.g., 2).
+	// This allows comparing 2 tabs, but opening a 3rd will close the oldest.
+	const MaxPprofSessions = 2
+	if len(pprofSessions) >= MaxPprofSessions {
+		var oldestKey string
+		var oldestTime time.Time
+		first := true
+
+		for k, s := range pprofSessions {
+			if first || s.LastAccess.Before(oldestTime) {
+				oldestTime = s.LastAccess
+				oldestKey = k
+				first = false
+			}
+		}
+
+		if oldestKey != "" {
+			s := pprofSessions[oldestKey]
+			delete(pprofSessions, oldestKey) // Remove from map first
+			if s.Cmd.Process != nil {
+				s.Cmd.Process.Kill()
+			}
+			logger.InfoGlobal().Msgf("Evicted oldest pprof session: %s", oldestKey)
+		}
+	}
+
+	// 4. Start new
+	port, err := getFreePort()
+	if err != nil {
+		return 0, err
+	}
+
+	// go tool pprof -http=localhost:PORT -no_browser {file}
+	cmd := exec.Command("go", "tool", "pprof", fmt.Sprintf("-http=localhost:%d", port), "-no_browser", targetPath)
+	// We should probably set PPROF_TMPDIR or something if needed, but default is fine.
+
+	if err := cmd.Start(); err != nil {
+		return 0, fmt.Errorf("failed to start pprof: %v", err)
+	}
+
+	// Give it a moment to start listening
+	time.Sleep(500 * time.Millisecond) // Naive wait
+
+	pprofSessions[targetPath] = &PprofSession{
+		Port:       port,
+		Cmd:        cmd,
+		LastAccess: time.Now(),
+	}
+
+	go func() {
+		cmd.Wait()
+		pprofMutex.Lock()
+		// Only delete if it is still the same session (check pointer or cmd)
+		if s, ok := pprofSessions[targetPath]; ok && s.Cmd == cmd {
+			delete(pprofSessions, targetPath)
+		}
+		pprofMutex.Unlock()
+	}()
+
+	return port, nil
+}
+
+func startPprofCleanupMonitor() {
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			pprofMutex.Lock()
+			now := time.Now()
+			for k, s := range pprofSessions {
+				// Cleanup dead
+				if s.Cmd.ProcessState != nil && s.Cmd.ProcessState.Exited() {
+					delete(pprofSessions, k)
+					continue
+				}
+				// Cleanup Idle (> 15 mins)
+				if now.Sub(s.LastAccess) > 15*time.Minute {
+					delete(pprofSessions, k) // Remove first
+					if s.Cmd.Process != nil {
+						s.Cmd.Process.Kill()
+					}
+					logger.InfoGlobal().Msgf("Cleaned up idle pprof session: %s", k)
+				}
+			}
+			pprofMutex.Unlock()
+		}
+	}()
+}
+
+func getFreePort() (int, error) {
+	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
+	if err != nil {
+		return 0, err
+	}
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+func handlePprofProxy(c *gin.Context) {
+	// URL: /api/performance/ui/:session/*path
+	// session ID is essentially the relative path to the file, 
+	// but we encoded it to be URL safe. Or just pass "timestamp__service__instance/filename" directly?
+	// Gin :session will match until next slash.
+	// But our "ID" contains slashes (folder/file). 
+	// So we should expect encoded session ID. 
+	// Let's assume frontend calls: /api/performance/ui?file={path}&path={path_in_ui}
+	// Or define route as /api/performance/ui/*filepath
+	// But pprof UI makes requests to root relative paths e.g. /ui/flamegraph.
+	
+	// Better strategy:
+	// Frontend opens: /api/performance/ui/view?file={path} in new tab.
+	// This handler renders a page that REWRITES links? No.
+	
+	// Best Strategy:
+	// We need a path prefix proxy.
+	// /api/performance/ui/<safe_file_key>/...
+	// <safe_file_key> -> base64(path)
+	
+	safeKey := c.Param("key")
+	proxyPath := c.Param("path")
+	
+	decodedBytes, err := base64.RawURLEncoding.DecodeString(safeKey)
+	if err != nil {
+		c.String(400, "Invalid key")
+		return
+	}
+	relPath := string(decodedBytes)
+	
+	// Security:
+	absStorage, _ := filepath.Abs("./storage/pprof")
+	targetPath := filepath.Join(absStorage, relPath)
+	if !strings.HasPrefix(targetPath, absStorage) {
+		c.String(403, "Access denied")
+		return
+	}
+	
+	port, err := GetOrStartPprofSession(targetPath)
+	if err != nil {
+		c.String(500, "Failed to start pprof: "+err.Error())
+		return
+	}
+	
+	// Reverse Proxy
+	director := func(req *http.Request) {
+		req.URL.Scheme = "http"
+		req.URL.Host = fmt.Sprintf("localhost:%d", port)
+		// Strip the prefix (/api/performance/ui/<key>)
+		// proxyPath already has the rest
+		req.URL.Path = proxyPath
+		
+		// pprof UI assets sometimes refer to root. 
+		// E.g. <script src="/ui/jquery.js">.
+		// If we serve under /api/.../ui/<key>/, the browser will request /api/.../ui/<key>/ui/jquery.js
+		// So proxyPath will be /ui/jquery.js. This maps correctly to localhost:port/ui/jquery.js.
+		// PERFECT.
+	}
+	
+	proxy := &httputil.ReverseProxy{
+		Director: director,
+		ModifyResponse: func(r *http.Response) error {
+			// Fix redirects from pprof (which assumes it is at root)
+			if loc := r.Header.Get("Location"); loc != "" {
+				// If pprof redirects to absolute path (e.g. "/ui"), rewrite it to be under our proxy path
+				if strings.HasPrefix(loc, "/") {
+					r.Header.Set("Location", "/api/performance/ui/" + safeKey + loc)
+				}
+			}
+			return nil
+		},
+	}
+	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func handleDeletePerformanceHistory(c *gin.Context) {
+	var body struct {
+		Folders []string `json:"folders"`
+	}
+
+	if err := c.BindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	baseDir, _ := filepath.Abs("./storage/pprof")
+	deletedCount := 0
+	
+	for _, folder := range body.Folders {
+		// Security Check: simple basename check
+		if strings.Contains(folder, "..") || strings.Contains(folder, "/") || strings.Contains(folder, "\\") {
+			continue
+		}
+		
+		targetPath := filepath.Join(baseDir, folder)
+		// Double check prefix
+		if !strings.HasPrefix(targetPath, baseDir) {
+			continue
+		}
+
+		if err := os.RemoveAll(targetPath); err == nil {
+			deletedCount++
+			
+			// Also clean up any active pprof session
+			pprofMutex.Lock()
+			// Sessions keys are "folder/file". We need to find keys starting with folder.
+			for k, s := range pprofSessions {
+				if strings.HasPrefix(k, folder+"/") || strings.HasPrefix(k, folder+"\\")  {
+					if s.Cmd.Process != nil {
+						s.Cmd.Process.Kill()
+					}
+					delete(pprofSessions, k)
+				}
+			}
+			pprofMutex.Unlock()
+		}
+	}
+
+	c.JSON(200, gin.H{"success": true, "deleted": deletedCount})
+}
+
+// ... initRegistry ...
 func initRegistry() {
 	methodRegistry = make(map[string]GenericHandler)
+
 
 	methodRegistry["ValidateToken"] = func(ctx context.Context, p *ProjectContext, payload []byte) (interface{}, error) {
 		var req struct {

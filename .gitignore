@@ -26,9 +26,14 @@ go.work
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-logs/
+# Validations
+*.prof
+*.out
+storage/gs/
 
 # Temporary files
 tmp/
+
+# Logs
+*.log
+logs/

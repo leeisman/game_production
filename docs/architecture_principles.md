@@ -157,3 +157,22 @@ Gateway 是系統的**接入層 (Access Layer)**，也是唯一的 WebSocket 入
         *   **優勢**: 比起 Redis Pub/Sub，這種方式**可控性更强**（明確知道發給了誰，失敗可以重試）且**延遲更低**（少了一跳 Redis）。
     *   **直連架構 (Direct Connection)**: 結合客戶端服務發現，內部服務間通訊 (Service-to-Service) 採用 **P2P 直連模式**，不經過任何中間代理（如 Nginx）。這消除了單點瓶頸，並顯著降低網絡跳數 (Network Hops) 與延遲。
 
+### 6. 性能分析與診斷 (Performance Profiling & Diagnostics)
+
+為了在生產環境中安全地進行性能調優，我們設計了一套**按需開啟 (On-Demand)** 的 Pprof 機制，避免了直接暴露敏感接口或長期開啟帶來的性能損耗。
+
+*   **核心原則**:
+    *   **集中管控 (Centralized Control)**: 所有 Profiling 操作統一由 **Ops Service** 發起，開發人員無需直接登錄服務器或 Pod。
+    *   **按需觸發 (On-Demand Trigger)**: Pprof 採集僅在明確指令下開啟，並強制設定**採集時長 (Duration)** (如 30s)，採集結束後自動關閉，防止遺忘導致的性能下降。
+    *   **結果可視化 (Visualization)**: 集成 `go tool pprof` 的 Web UI，支持在 Ops Dashboard 直接查看 FlameGraph (火焰圖) 和調用棧。
+
+*   **工作流程 (Workflow)**:
+    1.  **Instruction**: 管理員在 Ops Dashboard 選擇目標服務與實例 (透過服務發現列表)，發送 `CollectPerformance` gRPC 指令。
+    2.  **Local Profiling**: 目標服務實例收到指令後，啟動 `runtime/pprof` 進行 CPU/Heap/Goroutine 採集。
+    3.  **Upload & Storage**: 採集完成後，二進位 Profile 數據直接透過 gRPC Response 返回給 Ops Service，並持久化存儲於 Ops Server。
+    4.  **Proxy View**: Ops Service 動態啟動 `go tool pprof` http server，並透過 **Reverse Proxy** 將交互式分析介面映射到前端，實現無縫的除錯體驗。
+
+*   **資源管理與生命週期 (Resource Management)**:
+    *   **閒置清理 (Idle Cleanup)**: 系統每分鐘監控所有開啟的 Pprof Web Session，若超過 **15分鐘** 無人訪問，自動終止進程並釋放 Port。
+    *   **LRU 淘汰 (LRU Eviction)**: 限制 Ops Service 同時開啟的分析視窗數量 (Max=2)。當開啟新分析時，將自動關閉**最久未訪問**的舊 Session，確保伺服器資源不被濫用。
+

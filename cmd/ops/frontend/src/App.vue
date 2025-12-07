@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import GenericPanel from './components/GenericPanel.vue'
+import PprofPanel from './components/PprofPanel.vue'
 import ServiceStatus from './components/ServiceStatus.vue'
 
 const currentTab = ref('services')
@@ -79,6 +80,13 @@ onMounted(() => {
               >
                 RPC Console
               </button>
+              <button 
+                 @click="currentTab = 'pprof'"
+                 class="inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors duration-200"
+                 :class="currentTab === 'pprof' ? 'border-blue-500 text-gray-900 dark:text-white' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300'"
+              >
+                Performance
+              </button>
             </div>
           </div>
           <div class="flex items-center gap-4">
@@ -106,6 +114,7 @@ onMounted(() => {
       >
         <ServiceStatus v-if="currentTab === 'services' && currentProject" :projectId="currentProject" :key="currentProject" />
         <GenericPanel v-else-if="currentTab === 'rpc' && currentProject" :projectId="currentProject" :key="currentProject" />
+        <PprofPanel v-else-if="currentTab === 'pprof' && currentProject" :projectId="currentProject" :key="currentProject" />
         <div v-else class="text-center py-20 text-gray-400">
             <p v-if="projects.length === 0">Loading configuration...</p>
             <p v-else>Please select a project.</p>

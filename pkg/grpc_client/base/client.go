@@ -15,6 +15,7 @@ import (
 
 	"github.com/frankieli/game_product/pkg/discovery"
 	"github.com/frankieli/game_product/pkg/logger"
+	pbAdmin "github.com/frankieli/game_product/shared/proto/admin"
 )
 
 // BaseClient handles gRPC connections to various services
@@ -235,4 +236,29 @@ func (c *BaseClient) withRequestID(ctx context.Context) context.Context {
 		return metadata.AppendToOutgoingContext(ctx, "request_id", reqID)
 	}
 	return ctx
+}
+
+// CollectPerformance triggers performance data collection on a specific instance or random one
+func (c *BaseClient) CollectPerformance(ctx context.Context, serviceName string, targetInstance string, duration int32) (*pbAdmin.CollectResp, error) {
+	var conn *grpc.ClientConn
+	var err error
+
+	if targetInstance != "" {
+		// Use specific instance
+		conn, err = c.getConnDirect(targetInstance)
+	} else {
+		// Use Load Balancing (Random)
+		conn, err = c.GetLBConn(serviceName)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	client := pbAdmin.NewAdminServiceClient(conn)
+	req := &pbAdmin.CollectReq{
+		DurationSeconds: duration,
+	}
+
+	return client.CollectPerformanceData(c.withRequestID(ctx), req)
 }

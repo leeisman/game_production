@@ -20,12 +20,14 @@ import (
 	gatewayHttp "github.com/frankieli/game_product/internal/modules/gateway/adapter/http"
 	gatewayUseCase "github.com/frankieli/game_product/internal/modules/gateway/usecase"
 	"github.com/frankieli/game_product/internal/modules/gateway/ws"
+	"github.com/frankieli/game_product/pkg/admin"
 	"github.com/frankieli/game_product/pkg/discovery"
 	grpcClient "github.com/frankieli/game_product/pkg/grpc_client/base"
 	colorGameClient "github.com/frankieli/game_product/pkg/grpc_client/color_game"
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/frankieli/game_product/pkg/netutil"
 
+	pbAdmin "github.com/frankieli/game_product/shared/proto/admin"
 	pbGateway "github.com/frankieli/game_product/shared/proto/gateway"
 )
 
@@ -98,6 +100,7 @@ func main() {
 
 	grpcServer := grpc.NewServer()
 	pbGateway.RegisterGatewayServiceServer(grpcServer, gatewayGrpcHandler)
+	pbAdmin.RegisterAdminServiceServer(grpcServer, admin.NewServer())
 
 	go func() {
 		if err := grpcServer.Serve(grpcLis); err != nil {

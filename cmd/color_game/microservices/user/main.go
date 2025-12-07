@@ -18,9 +18,11 @@ import (
 	userHttp "github.com/frankieli/game_product/internal/modules/user/adapter/http"
 	userRepo "github.com/frankieli/game_product/internal/modules/user/repository"
 	"github.com/frankieli/game_product/internal/modules/user/usecase"
+	"github.com/frankieli/game_product/pkg/admin"
 	"github.com/frankieli/game_product/pkg/discovery"
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/frankieli/game_product/pkg/netutil"
+	pbAdmin "github.com/frankieli/game_product/shared/proto/admin"
 	pb "github.com/frankieli/game_product/shared/proto/user"
 )
 
@@ -69,6 +71,7 @@ func main() {
 	grpcServer := grpc.NewServer()
 	userGrpcHandler := userGrpc.NewHandler(userUC)
 	pb.RegisterUserServiceServer(grpcServer, userGrpcHandler)
+	pbAdmin.RegisterAdminServiceServer(grpcServer, admin.NewServer())
 
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {

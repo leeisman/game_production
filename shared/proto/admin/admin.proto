@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package admin;
+
+option go_package = "github.com/frankieli/game_product/shared/proto/admin";
+
+// Service for administrative tasks like monitoring and control
+service AdminService {
+  // CollectPerformanceData captures CPU profile, Heap snapshot, Goroutine dump, and Trace
+  // for a specified duration and returns them as binary data.
+  rpc CollectPerformanceData(CollectReq) returns (CollectResp);
+}
+
+message CollectReq {
+  // Duration to profile (e.g., 30 seconds). 
+  int32 duration_seconds = 1; 
+}
+
+message CollectResp {
+  bytes cpu_profile = 1;      // Binary data for pprof CPU profile
+  bytes trace_data = 2;       // Binary data for runtime execution trace
+  bytes heap_snapshot = 3;    // Binary data for pprof Heap profile
+  bytes goroutine_dump = 4;   // Binary/Text data for Goroutine stack traces
+  int64 timestamp = 5;        // Unix timestamp of when collection finished
+  string service_name = 6;    // Name of the service (e.g., "user-service")
+}

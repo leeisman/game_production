@@ -84,3 +84,26 @@ The system implements a **Hybrid Monolith/Microservices** architecture, leveragi
 *   `pkg/grpc_client/base/`: **BaseClient** (Discovery, Jitter TTL, Connection Pool).
 *   `pkg/netutil/`: **Network Utilities** (IP/Port logic).
 *   `cmd/color_game/microservices/`: **Main Entry Points** (Dependency Injection Root).
+
+---
+
+## 6. Observability & Operations
+
+### 6.1 Ops Service (`cmd/ops`)
+*   **Role**: Centralized Operations Dashboard & Control Plane.
+*   **Functions**:
+    *   **Service & Instance Explorer**: Discovers services via Nacos.
+    *   **Remote RPC Invocation**: Can invoke generic debug methods on services.
+    *   **Performance Profiling**: Orchestrates the collection of Pprof data.
+
+### 6.2 Performance Profiling (Pprof)
+*   **Philosophy**: **On-Demand** & **Secure**. No open pprof ports on production services.
+*   **Workflow**:
+    1.  User requests profile via Ops UI.
+    2.  Ops Service sends gRPC `CollectPerformance` command to target instance.
+    3.  Target instance runs `runtime/pprof` locally for N seconds.
+    4.  Data returned to Ops Service and stored.
+    5.  Ops Service launches `go tool pprof` Web UI on demand and proxies it to the user.
+*   **Resource Management**:
+    *   **Idle Cleanup**: Pprof sessions killed after 15m inactivity.
+    *   **LRU Eviction**: Max 2 concurrent sessions to save resources.
