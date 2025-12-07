@@ -47,9 +47,9 @@
 
 詳細文檔位於 `docs/` 目錄：
 
-*   **架構**: [設計原則](docs/architecture_principles.md) | [專案演進](docs/ai/project_evolution.md)
+*   **架構**: [設計原則](docs/architecture_principles.md)
 *   **模組**: [網關模組 (Gateway)](docs/module/gateway/README.md) | [用戶模組 (User)](docs/module/user/README.md)
-*   **指南**: [服務啟動指南](docs/cmd/color_game.md) | [WebSocket 協議](docs/websocket_protocol.md)
+*   **指南**: [單體啟動指南](docs/cmd/color_game/monolith/README.md)
 *   **效能**: [基準測試報告](docs/performance/color_game_benchmark.md)
 
 ---
