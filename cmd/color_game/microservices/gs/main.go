@@ -28,8 +28,8 @@ import (
 
 func main() {
 	logger.Init(logger.Config{
-		Level:  "debug",
-		Format: "console",
+		Level:  "info",
+		Format: "json",
 	})
 
 	logger.InfoGlobal().Msg("🎮 Starting Color Game GS (Game Service)...")
@@ -133,7 +133,25 @@ func main() {
 	<-quit
 	logger.InfoGlobal().Msg("🛑 Shutting down GS...")
 
-	grpcServer.GracefulStop()
+	// 1. Deregister first to stop new traffic (Client Side LB might still have cache)
 	nacosClient.DeregisterService(serviceName, ip, uint64(actualPort))
-	logger.InfoGlobal().Msg("✅ GS shutdown complete")
+	logger.InfoGlobal().Msg("✅ Deregistered from Nacos")
+
+	// 2. Stop gRPC Server (Wait for ongoing requests including Session/SettleRound)
+	logger.InfoGlobal().Msg("⏳ Stopping gRPC Server (Waiting for active RPCs)...")
+	stopped := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+		logger.InfoGlobal().Msg("✅ gRPC Server stopped gracefully")
+	case <-time.After(30 * time.Second): // Allow 30s for long-running batch settlements
+		logger.WarnGlobal().Msg("⚠️ gRPC Server stop timed out (30s), forcing Stop")
+		grpcServer.Stop()
+	}
+
+	logger.InfoGlobal().Msg("👋 GS shutdown complete")
 }
