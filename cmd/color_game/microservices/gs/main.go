@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -23,6 +22,7 @@ import (
 	"github.com/frankieli/game_product/pkg/grpc_client/base"
 	"github.com/frankieli/game_product/pkg/grpc_client/color_game"
 	"github.com/frankieli/game_product/pkg/logger"
+	"github.com/frankieli/game_product/pkg/netutil"
 	pb "github.com/frankieli/game_product/shared/proto/colorgame"
 )
 
@@ -88,14 +88,12 @@ func main() {
 	logger.InfoGlobal().Msg("✅ GS UseCase initialized")
 
 	// 8. Start gRPC Server (Random Port)
-	lis, err := net.Listen("tcp", ":0")
+	lis, actualPort, err := netutil.ListenWithFallback("0")
 	if err != nil {
-		logger.FatalGlobal().Err(err).Msg("Failed to listen on random port")
+		logger.FatalGlobal().Err(err).Msg("Failed to listen on port")
 	}
 
-	addr := lis.Addr().(*net.TCPAddr)
-	actualPort := addr.Port
-	logger.InfoGlobal().Int("port", actualPort).Msg("🚀 GS gRPC Service listening (Random Port)")
+	logger.InfoGlobal().Int("port", actualPort).Msg("🚀 GS gRPC Service listening")
 
 	grpcServer := grpc.NewServer()
 	gsGrpcHandler := colorgameGSGrpc.NewHandler(gsUC)
@@ -108,7 +106,7 @@ func main() {
 	}()
 
 	// 9. Register to Nacos with retry
-	ip := discovery.GetOutboundIP()
+	ip := netutil.GetOutboundIP()
 	serviceName := "gs-service"
 
 	var registered bool

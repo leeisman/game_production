@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,6 +21,7 @@ import (
 	"github.com/frankieli/game_product/pkg/grpc_client/base"
 	"github.com/frankieli/game_product/pkg/grpc_client/color_game"
 	"github.com/frankieli/game_product/pkg/logger"
+	"github.com/frankieli/game_product/pkg/netutil"
 	pb "github.com/frankieli/game_product/shared/proto/colorgame"
 	"github.com/redis/go-redis/v9"
 )
@@ -83,18 +83,16 @@ func main() {
 	gmsUC := colorgameGMSUseCase.NewGMSUseCase(stateMachine, cgClient, cgClient, gameRoundRepo)
 	logger.InfoGlobal().Msg("✅ GMS UseCase initialized")
 
-	// 9. Start gRPC Server (Random Port)
-	lis, err := net.Listen("tcp", ":0")
+	// 9. Start gRPC Server
+	lis, actualPort, err := netutil.ListenWithFallback("0")
 	if err != nil {
-		logger.FatalGlobal().Err(err).Msg("Failed to listen on random port")
+		logger.FatalGlobal().Err(err).Msg("Failed to listen on port")
 	}
-
-	addr := lis.Addr().(*net.TCPAddr)
-	actualPort := addr.Port
-	logger.InfoGlobal().Int("port", actualPort).Msg("🚀 GMS gRPC Service listening (Random Port)")
+	logger.InfoGlobal().Int("port", actualPort).Msg("🚀 GMS gRPC Service listening")
 
 	grpcServer := grpc.NewServer()
 	gmsGrpcHandler := colorgameGMSGrpc.NewHandler(gmsUC)
+	// Register GMS service
 	pb.RegisterColorGameGMSServiceServer(grpcServer, gmsGrpcHandler)
 
 	go func() {
@@ -103,8 +101,8 @@ func main() {
 		}
 	}()
 
-	// 10. Register to Nacos with retry
-	ip := discovery.GetOutboundIP()
+	// 10. Register to Nacos (Retry mechanism)
+	ip := netutil.GetOutboundIP()
 	serviceName := "gms-service"
 
 	var registered bool

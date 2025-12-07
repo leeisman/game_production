@@ -250,19 +250,10 @@ func main() {
 
 	// 6.2 Stop State Machine (wait for current round to finish)
 	logger.InfoGlobal().Msg("⏳ Waiting for current round to finish...")
-	stateMachine.Stop()
-
-	done := make(chan struct{})
-	go func() {
-		stateMachine.WaitForDone()
-		close(done)
-	}()
-
-	select {
-	case <-done:
+	if err := stateMachine.GracefulShutdown(30 * time.Second); err != nil {
+		logger.WarnGlobal().Err(err).Msg("⚠️ State Machine shutdown timed out (forced exit)")
+	} else {
 		logger.InfoGlobal().Msg("✅ State Machine stopped gracefully")
-	case <-time.After(30 * time.Second):
-		logger.WarnGlobal().Msg("⚠️ State Machine stop timed out (30s), forcing exit")
 	}
 
 	// 6.3 Shutdown Gateway (close all WebSocket connections)

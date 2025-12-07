@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,11 +19,11 @@ import (
 	gatewayHttp "github.com/frankieli/game_product/internal/modules/gateway/adapter/http"
 	gatewayUseCase "github.com/frankieli/game_product/internal/modules/gateway/usecase"
 	"github.com/frankieli/game_product/internal/modules/gateway/ws"
+	"github.com/frankieli/game_product/pkg/discovery"
 	grpcClient "github.com/frankieli/game_product/pkg/grpc_client/base"
 	colorGameClient "github.com/frankieli/game_product/pkg/grpc_client/color_game"
-
-	"github.com/frankieli/game_product/pkg/discovery"
 	"github.com/frankieli/game_product/pkg/logger"
+	"github.com/frankieli/game_product/pkg/netutil"
 
 	pbGateway "github.com/frankieli/game_product/shared/proto/gateway"
 )
@@ -89,15 +88,13 @@ func main() {
 	// 10. Start gRPC Server (for Broadcast and SendToUser from GMS/GS)
 	gatewayGrpcHandler := gatewayGrpc.NewHandler(wsManager)
 
-	// Use random port for gRPC
-	grpcLis, err := net.Listen("tcp", ":0")
+	// Use random port for gRPC (handled by ListenWithFallback "0")
+	grpcLis, grpcPort, err := netutil.ListenWithFallback("0")
 	if err != nil {
-		logger.FatalGlobal().Err(err).Msg("Failed to listen on random gRPC port")
+		logger.FatalGlobal().Err(err).Msg("Failed to listen on gRPC port")
 	}
 
-	grpcAddr := grpcLis.Addr().(*net.TCPAddr)
-	grpcPort := grpcAddr.Port
-	logger.InfoGlobal().Int("grpc_port", grpcPort).Msg("🚀 Gateway gRPC Service listening (Random Port)")
+	logger.InfoGlobal().Int("grpc_port", grpcPort).Msg("🚀 Gateway gRPC Service listening")
 
 	grpcServer := grpc.NewServer()
 	pbGateway.RegisterGatewayServiceServer(grpcServer, gatewayGrpcHandler)
@@ -109,7 +106,7 @@ func main() {
 	}()
 
 	// Register Gateway gRPC service to Nacos
-	ip := discovery.GetOutboundIP()
+	ip := netutil.GetOutboundIP()
 	gatewayGrpcServiceName := "gateway-service"
 
 	var grpcRegistered bool

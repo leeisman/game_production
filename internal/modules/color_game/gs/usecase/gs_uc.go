@@ -314,7 +314,7 @@ func (uc *GSUseCase) processBatch(ctx context.Context, roundID string, winningCo
 	// 1. Write batch to database
 	if uc.betOrderRepo != nil && len(betOrders) > 0 {
 		startTime := time.Now()
-		if err := uc.betOrderRepo.BatchCreate(ctx, betOrders); err != nil {
+		if err := uc.betOrderRepo.BatchCreate(context.Background(), betOrders); err != nil {
 			logger.Error(ctx).
 				Err(err).
 				Int("batch_num", batchNum).

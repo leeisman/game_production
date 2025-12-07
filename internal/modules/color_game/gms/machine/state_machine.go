@@ -2,6 +2,7 @@ package machine
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -56,6 +57,7 @@ type StateMachine struct {
 	phaseEndTime    time.Time
 
 	stopping bool
+	doneChan chan struct{}
 }
 
 // NewStateMachine creates a new state machine
@@ -69,6 +71,31 @@ func NewStateMachine() *StateMachine {
 		ResultDuration:  5 * time.Second,
 		WaitDuration:    2 * time.Second,
 		RestDuration:    3 * time.Second,
+		doneChan:        make(chan struct{}),
+	}
+}
+
+// WaitForDone blocks until the StateMachine has completely stopped
+func (sm *StateMachine) WaitForDone() {
+	<-sm.doneChan
+}
+
+// GracefulShutdown signals the state machine to stop and waits for it to finish.
+// It returns an error if the timeout is exceeded.
+func (sm *StateMachine) GracefulShutdown(timeout time.Duration) error {
+	sm.Stop()
+
+	done := make(chan struct{})
+	go func() {
+		sm.WaitForDone()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("state machine shutdown timed out")
 	}
 }
 
@@ -146,15 +173,17 @@ func (sm *StateMachine) Stop() {
 // Start starts the state machine loop
 func (sm *StateMachine) Start(ctx context.Context) {
 	logger.Info(ctx).Msg("🚀 [GMS] State Machine Started (Worker Pool Active)")
+	defer close(sm.doneChan)
 
 	// Start workers
 	sm.startWorkers()
 	defer sm.shutdownWorkers()
 
 	for {
+		// Check context for FORCE stop
 		select {
 		case <-ctx.Done():
-			logger.Info(ctx).Msg("🛑 [GMS] Context Cancelled, Stopping State Machine")
+			logger.Info(ctx).Msg("🛑 [GMS] Context Cancelled (FORCE STOP), Stopping State Machine Immediately")
 			return
 		default:
 		}
@@ -163,8 +192,9 @@ func (sm *StateMachine) Start(ctx context.Context) {
 		stopping := sm.stopping
 		sm.mu.RUnlock()
 
+		// If stopping flag is set, stop BEFORE starting a new round
 		if stopping {
-			logger.Info(ctx).Msg("🛑 [GMS] State Machine Stopping (Graceful)")
+			logger.Info(ctx).Msg("🛑 [GMS] State Machine Stopping (Graceful - Round Set Completed)")
 			sm.emitEvent(GameEvent{
 				Type:                pbColorGame.ColorGameState_GAME_STATE_STOPPED,
 				RoundID:             "",
@@ -174,7 +204,11 @@ func (sm *StateMachine) Start(ctx context.Context) {
 			return
 		}
 
+		// Run the full round
 		sm.runRound(ctx)
+
+		// Note: We check 'stopping' again at the top of the loop,
+		// so if Stop() was called during runRound, we will finish that round and then exit.
 	}
 }
 

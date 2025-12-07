@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,13 +19,14 @@ import (
 	"github.com/frankieli/game_product/internal/modules/user/usecase"
 	"github.com/frankieli/game_product/pkg/discovery"
 	"github.com/frankieli/game_product/pkg/logger"
+	"github.com/frankieli/game_product/pkg/netutil"
 	pb "github.com/frankieli/game_product/shared/proto/user"
 )
 
 func main() {
 	logger.Init(logger.Config{
-		Level:  "debug",
-		Format: "console",
+		Level:  "info",
+		Format: "json",
 	})
 
 	logger.InfoGlobal().Msg("👤 Starting User Service...")
@@ -58,16 +58,13 @@ func main() {
 	sessionRepo := userRepo.NewSessionRepository(db)
 	userUC := usecase.NewUserUseCase(userRepository, sessionRepo, cfg.JWT.Secret, cfg.JWT.Duration)
 
-	// 4. Start gRPC Server (Always use Random Port as requested)
-	lis, err := net.Listen("tcp", ":0")
+	// 4. Start gRPC Server (Use netutil to handle port binding)
+	lis, actualPort, err := netutil.ListenWithFallback("0")
 	if err != nil {
-		logger.FatalGlobal().Err(err).Msg("Failed to listen on random port")
+		logger.FatalGlobal().Err(err).Msg("Failed to listen on port")
 	}
 
-	// Capture actual port
-	addr := lis.Addr().(*net.TCPAddr)
-	actualPort := addr.Port
-	logger.InfoGlobal().Int("port", actualPort).Msg("🚀 User gRPC Service listening (Random Port)")
+	logger.InfoGlobal().Int("port", actualPort).Msg("🚀 User gRPC Service listening")
 
 	grpcServer := grpc.NewServer()
 	userGrpcHandler := userGrpc.NewHandler(userUC)
@@ -80,7 +77,7 @@ func main() {
 	}()
 
 	// 5. Register to Nacos (with Retry)
-	ip := discovery.GetOutboundIP()
+	ip := netutil.GetOutboundIP()
 	nacosClient, err := discovery.NewNacosClient(cfg.Nacos.Host, cfg.Nacos.Port, cfg.Nacos.NamespaceID)
 	if err != nil {
 		logger.ErrorGlobal().Err(err).Msg("Failed to create Nacos client, skipping registration")
