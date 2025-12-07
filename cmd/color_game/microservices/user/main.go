@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -24,10 +25,9 @@ import (
 )
 
 func main() {
-	logger.Init(logger.Config{
-		Level:  "info",
-		Format: "json",
-	})
+	background := flag.Bool("d", false, "Run in background mode (disable console logging)")
+	logger.InitWithFile("logs/color_game/user_service.log", "info", "json", !*background)
+	defer logger.Flush()
 
 	logger.InfoGlobal().Msg("👤 Starting User Service...")
 
