@@ -78,6 +78,10 @@ kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type json -
 # ConfigMaps & Secrets
 kubectl apply -f deploy/k8s/config/
 
+# Metrics Server (for k9s/kubectl top)
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl patch -n kube-system deployment metrics-server --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+
 # Services
 kubectl apply -f deploy/k8s/nacos.yaml
 kubectl apply -f deploy/k8s/redis.yaml
