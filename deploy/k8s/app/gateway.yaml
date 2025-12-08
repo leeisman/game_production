@@ -25,7 +25,10 @@ spec:
             name: gateway-secret
         resources:
           limits:
-            cpu: "200m"
+            cpu: "4000m"
+            memory: "1024Mi"
+          requests:
+            cpu: "250m"
             memory: "256Mi"
 ---
 apiVersion: v1
@@ -35,7 +38,9 @@ metadata:
 spec:
   selector:
     app: gateway-service
+  type: NodePort
   ports:
     - name: http
       port: 8081
       targetPort: 8081
+      nodePort: 30081

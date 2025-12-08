@@ -114,17 +114,30 @@ The system implements a **Hybrid Monolith/Microservices** architecture, leveragi
 
 ### 7.1 Local Kubernetes (Kind)
 *   **Environment**: [Kind (Kubernetes in Docker)](https://kind.sigs.k8s.io/) is used for simulating multi-node clusters locally.
-*   **Tools**:
-    *   `kind`: Cluster creation/management.
-    *   `k9s`: TUI for navigating and troubleshooting the cluster.
-    *   `kubectl`: CLI interaction.
 *   **Cluster Config**: 3 Nodes (1 Control-Plane, 2 Workers).
+*   **Ingress Strategy**:
+    *   **Port Mapping**: Host ports (8088, 443) are mapped ONLY to the **Control Plane** container.
+    *   **Node Selector**: Ingress Controller must be pinned to the Control Plane using `nodeSelector: {"ingress-ready": "true"}` to receive external traffic.
+*   **Tools**: `kind`, `k9s`, `kubectl`.
 
 ### 7.2 Service Discovery (Nacos on K8s)
 *   **Image**: **`nacos/nacos-server:latest`** (Required for ARM64/Apple Silicon support).
 *   **Port Nuance**:
     *   Modern Nacos images use **8080** as the primary container port for *both* HTTP API and Console.
     *   Legacy **8848** port may not work as expected in containerized environments for the Console.
-    *   **Decision**: Map Service NodePort to Container Port **8080**.
-*   **Security**: v2.2+ enforces Authentication. `NACOS_AUTH_IDENTITY_KEY` and `NACOS_AUTH_TOKEN` environment variables are **mandatory** to prevent crash-on-start.
+*   **Security**: `NACOS_AUTH_IDENTITY_KEY` and `NACOS_AUTH_TOKEN` environment variables are **mandatory**.
+
+### 7.3 Network Access & Port Mappings
+*   **Ingress Domains** (Map to `127.0.0.1` in `/etc/hosts`):
+    *   `k8s.ops.local` -> Ops Dashboard (Port 8088)
+    *   `k8s.user.local` -> User Service API (Port 8088)
+    *   `k8s.gateway.local` -> Gateway WebSocket (Port 8088)
+*   **NodePort Direct Access**:
+    *   **Gateway**: `30081` (WS/gRPC)
+    *   **Nacos**: `30848` (Console/API)
+    *   **Postgres**: `30432` (Database)
+    *   **Redis**: `30379` (Cache)
+
+### 7.4 Global Standards
+*   **Health Checks**: All services must expose a `GET /health` (or `/api/<module>/health`) endpoint returning `200 OK` for readiness probes.
 

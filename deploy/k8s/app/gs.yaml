@@ -25,7 +25,10 @@ spec:
             name: colorgame-secret
         resources:
           limits:
-            cpu: "200m"
+            cpu: "4000m"
+            memory: "1024Mi"
+          requests:
+            cpu: "250m"
             memory: "256Mi"
 ---
 apiVersion: v1

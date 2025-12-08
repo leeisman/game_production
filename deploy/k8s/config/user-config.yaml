@@ -18,7 +18,7 @@ data:
   # Database Config
   DB_HOST: "postgres"
   DB_PORT: "5432"
-  DB_NAME: "casino_db"
+  DB_NAME: "game_db"
   DB_USER: "postgres"
   
   # Redis Config

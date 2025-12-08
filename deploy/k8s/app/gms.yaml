@@ -25,8 +25,11 @@ spec:
             name: colorgame-secret
         resources:
           limits:
-            cpu: "300m" # GMS 比較耗能
-            memory: "300Mi"
+            cpu: "4000m"
+            memory: "1024Mi"
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
 ---
 apiVersion: v1
 kind: Service

@@ -13,6 +13,11 @@ spec:
       labels:
         app: postgres
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: "game-cluster-control-plane"
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
       containers:
       - name: postgres
         image: postgres:15-alpine
@@ -23,6 +28,7 @@ spec:
           value: "password"
         - name: POSTGRES_DB
           value: "game_db"
+        args: ["-c", "max_connections=1000"]
         ports:
         - containerPort: 5432
           name: postgres
@@ -46,4 +52,4 @@ spec:
   ports:
   - port: 5432
     targetPort: 5432
-    nodePort: 30543
+    nodePort: 30432

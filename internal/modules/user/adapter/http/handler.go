@@ -1,9 +1,10 @@
 package http
 
 import (
-	"github.com/frankieli/game_product/internal/modules/user/usecase"
 	"net/http"
 	"time"
+
+	"github.com/frankieli/game_product/internal/modules/user/usecase"
 
 	"github.com/frankieli/game_product/pkg/logger"
 	"github.com/gin-gonic/gin"
@@ -33,6 +34,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	router.POST("/register", h.Register)
 	router.POST("/login", h.Login)
 	router.POST("/logout", h.Logout)
+	router.GET("/health", h.Health)
 }
 
 // Server represents the User module HTTP server
@@ -175,4 +177,9 @@ func (h *Handler) Logout(c *gin.Context) {
 	logger.Info(c.Request.Context()).Msg("Logout: success")
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// Health handles health checks
+func (h *Handler) Health(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "user-service"})
 }

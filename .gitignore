@@ -37,3 +37,4 @@ tmp/
 # Logs
 *.log
 logs/
+deploy/k8s/data/
