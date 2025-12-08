@@ -128,10 +128,10 @@ func main() {
 		c.Data(200, "text/html; charset=utf-8", data)
 	})
 
-	port := "7090"
-	logger.InfoGlobal().Msgf("🚀 OPS Server running at http://localhost:%s", port)
+	port := getEnv("OPS_PORT", "8080")
+	logger.InfoGlobal().Msgf("🚀 OPS Server running at :%s", port)
 	if err := r.Run(":" + port); err != nil {
-		logger.FatalGlobal().Err(err).Msg("Failed to start OPS server")
+		logger.FatalGlobal().Err(err).Msg("Failed to start server")
 	}
 }
 
@@ -142,9 +142,9 @@ func initProjects() {
 		{
 			ID:        "color_game",
 			Name:      "Color Game",
-			NacosHost: "localhost",
-			NacosPort: "8848",
-			Namespace: "public", // Assuming Color Game uses public namespace for now
+			NacosHost: getEnv("NACOS_HOST", "localhost"),
+			NacosPort: getEnv("NACOS_PORT", "8848"),
+			Namespace: getEnv("NACOS_NAMESPACE", "public"),
 		},
 		// Future games can be added here
 		// { ID: "poker", Name: "Poker", ... Namespace: "poker-ns" },
@@ -790,4 +790,11 @@ func mustSub(f fs.FS, dir string) fs.FS {
 		return f
 	}
 	return sub
+}
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
 }

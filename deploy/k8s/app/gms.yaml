@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gms-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gms-service
+  template:
+    metadata:
+      labels:
+        app: gms-service
+    spec:
+      containers:
+      - name: gms-service
+        image: game_product/gms:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 50052 # gRPC
+        envFrom:
+        - configMapRef:
+            name: colorgame-config
+        - secretRef:
+            name: colorgame-secret
+        resources:
+          limits:
+            cpu: "300m" # GMS 比較耗能
+            memory: "300Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gms-service
+spec:
+  selector:
+    app: gms-service
+  ports:
+    - name: grpc
+      port: 50052
+      targetPort: 50052

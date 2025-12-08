@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gs-service
+spec:
+  replicas: 1 # GS 可以水平擴展，但目前先開 1
+  selector:
+    matchLabels:
+      app: gs-service
+  template:
+    metadata:
+      labels:
+        app: gs-service
+    spec:
+      containers:
+      - name: gs-service
+        image: game_product/gs:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 50053 # 根據 User Code 習慣，GS 通常是 +1
+        envFrom:
+        - configMapRef:
+            name: colorgame-config
+        - secretRef:
+            name: colorgame-secret
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gs-service
+spec:
+  selector:
+    app: gs-service
+  ports:
+    - name: grpc
+      port: 50053
+      targetPort: 50053

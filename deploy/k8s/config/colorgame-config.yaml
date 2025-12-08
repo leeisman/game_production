@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: colorgame-config
+data:
+  # Service Identity
+  GAME_SERVER_PORT: "50052"
+  
+  # Game Settings
+  GAME_MAX_PLAYERS: "100"
+  COLORGAME_REPO_TYPE: "postgres" # or memory
+  
+  # Nacos Config
+  NACOS_HOST: "nacos"
+  NACOS_PORT: "8848"
+  NACOS_NAMESPACE: "public"
+  NACOS_GROUP: "DEFAULT_GROUP"
+  NACOS_LOG_DIR: "/tmp/nacos/log"
+  NACOS_CACHE_DIR: "/tmp/nacos/cache"
+
+  # Database Config
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_NAME: "casino_db"
+  DB_USER: "postgres"
+  
+  # Redis Config
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"

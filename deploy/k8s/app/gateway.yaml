@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-service
+  template:
+    metadata:
+      labels:
+        app: gateway-service
+    spec:
+      containers:
+      - name: gateway-service
+        image: game_product/gateway:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8081 # gRPC + WS
+        envFrom:
+        - configMapRef:
+            name: gateway-config
+        - secretRef:
+            name: gateway-secret
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-service
+spec:
+  selector:
+    app: gateway-service
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081

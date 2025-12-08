@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ops-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ops-service
+  template:
+    metadata:
+      labels:
+        app: ops-service
+    spec:
+      containers:
+      - name: ops-service
+        image: game_product/ops:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080 
+        envFrom:
+        - configMapRef:
+            name: user-config # Ops needs DB & Nacos
+        - secretRef:
+            name: user-secret
+        resources:
+          limits:
+            cpu: "100m"
+            memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ops-service
+spec:
+  selector:
+    app: ops-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

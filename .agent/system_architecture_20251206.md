@@ -107,3 +107,24 @@ The system implements a **Hybrid Monolith/Microservices** architecture, leveragi
 *   **Resource Management**:
     *   **Idle Cleanup**: Pprof sessions killed after 15m inactivity.
     *   **LRU Eviction**: Max 2 concurrent sessions to save resources.
+
+---
+
+## 7. Deployment & Infrastructure
+
+### 7.1 Local Kubernetes (Kind)
+*   **Environment**: [Kind (Kubernetes in Docker)](https://kind.sigs.k8s.io/) is used for simulating multi-node clusters locally.
+*   **Tools**:
+    *   `kind`: Cluster creation/management.
+    *   `k9s`: TUI for navigating and troubleshooting the cluster.
+    *   `kubectl`: CLI interaction.
+*   **Cluster Config**: 3 Nodes (1 Control-Plane, 2 Workers).
+
+### 7.2 Service Discovery (Nacos on K8s)
+*   **Image**: **`nacos/nacos-server:latest`** (Required for ARM64/Apple Silicon support).
+*   **Port Nuance**:
+    *   Modern Nacos images use **8080** as the primary container port for *both* HTTP API and Console.
+    *   Legacy **8848** port may not work as expected in containerized environments for the Console.
+    *   **Decision**: Map Service NodePort to Container Port **8080**.
+*   **Security**: v2.2+ enforces Authentication. `NACOS_AUTH_IDENTITY_KEY` and `NACOS_AUTH_TOKEN` environment variables are **mandatory** to prevent crash-on-start.
+

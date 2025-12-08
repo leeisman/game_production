@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+      - name: user-service
+        image: game_product/user:latest
+        imagePullPolicy: IfNotPresent # Kind 本地載入
+        ports:
+        - containerPort: 50051 # gRPC
+        - containerPort: 8082  # HTTP
+        envFrom:
+        - configMapRef:
+            name: user-config
+        - secretRef:
+            name: user-secret
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+spec:
+  selector:
+    app: user-service
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+    - name: http
+      port: 8082
+      targetPort: 8082

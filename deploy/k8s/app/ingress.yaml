@@ -1,0 +1,50 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: game-ingress
+  annotations:
+    # 告訴 K8s 這是一個 Nginx Ingress
+    kubernetes.io/ingress.class: "nginx"
+    # WebSocket 支援
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # 允許跨域 (如果前端是分離的)
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+spec:
+  rules:
+  # 綁定到 localhost (開發環境)
+  - host: localhost
+    http:
+      paths:
+      # User Service API
+      - path: /api/users
+        pathType: Prefix
+        backend:
+          service:
+            name: user-service
+            port:
+              number: 8082
+      # Gateway WebSocket
+      - path: /ws
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway-service
+            port:
+              number: 8081
+      # Ops Assets (No Rewrite needed)
+      - path: /assets
+        pathType: Prefix
+        backend:
+          service:
+            name: ops-service
+            port:
+              number: 8080
+      # Ops API (Catch-all for frontend requests like /api/projects)
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: ops-service
+            port:
+              number: 8080

@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nacos
+  labels:
+    app: nacos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nacos
+  template:
+    metadata:
+      labels:
+        app: nacos
+    spec:
+      containers:
+      - name: nacos
+        image: nacos/nacos-server:latest
+        env:
+        - name: MODE
+          value: "standalone"
+        - name: NACOS_AUTH_ENABLE
+          value: "false"
+        - name: NACOS_AUTH_IDENTITY_KEY
+          value: "serverIdentity"
+        - name: NACOS_AUTH_IDENTITY_VALUE
+          value: "security"
+        - name: NACOS_AUTH_TOKEN
+          value: "SecretKey012345678901234567890123456789012345678901234567890123456789"
+        ports:
+        - containerPort: 8080
+        # Resource limits are important in local k8s to avoid killing your laptop
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nacos
+spec:
+  selector:
+    app: nacos
+  type: NodePort
+  ports:
+    - port: 8848
+      targetPort: 8080
+      nodePort: 30848
+      name: http
+    - port: 9848
+      targetPort: 9848
+      name: grpc-client
+    - port: 9849
+      targetPort: 9849
+      name: grpc-server

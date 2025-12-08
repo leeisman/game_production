@@ -1,0 +1,27 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "ingress-ready=true"
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 80
+    protocol: TCP
+  - containerPort: 443
+    hostPort: 443
+    protocol: TCP
+  # Map Nacos Console (8848) for easy access
+  - containerPort: 30848
+    hostPort: 18848
+    protocol: TCP
+  # Mount local folder for persistence
+  extraMounts:
+  - hostPath: ./deploy/k8s/data
+    containerPath: /data
+- role: worker
+- role: worker
