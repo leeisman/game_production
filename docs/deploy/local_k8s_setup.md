@@ -71,6 +71,9 @@ kubectl wait --namespace ingress-nginx --for=condition=available deployment/ingr
 # [關鍵] Patch Controller: 綁定到 Control Plane 並移除資源限制
 kubectl patch deployment ingress-nginx-controller -n ingress-nginx -p '{"spec": {"template": {"spec": {"nodeSelector": {"ingress-ready": "true"}}}}}'
 kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type json -p='[{"op": "remove", "path": "/spec/template/spec/containers/0/resources/limits"}]'
+
+# [關鍵] Patch Nginx Config: 提高連線數上限 (for 10k connections)
+kubectl patch configmap ingress-nginx-controller -n ingress-nginx --type merge -p '{"data":{"max-worker-connections":"65536","worker-processes":"4"}}'
 ```
 
 ### 步驟 3: 部署基礎設施 (Infrastructure)

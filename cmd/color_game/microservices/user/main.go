@@ -27,14 +27,16 @@ import (
 )
 
 func main() {
+	// 1. Load Config
+	cfg := config.LoadUserConfig()
+
+	// Initialize Logger
 	background := flag.Bool("d", false, "Run in background mode (disable console logging)")
-	logger.InitWithFile("logs/color_game/user_service.log", "info", "json", !*background)
+	flag.Parse() // Need to parse flags
+	logger.InitWithFile("logs/color_game/user_service.log", cfg.Server.LogLevel, "json", !*background)
 	defer logger.Flush()
 
 	logger.InfoGlobal().Msg("👤 Starting User Service...")
-
-	// 1. Load Config
-	cfg := config.LoadUserConfig()
 
 	// 2. Initialize Database
 	dbConnStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",

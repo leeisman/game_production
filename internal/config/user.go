@@ -38,6 +38,7 @@ func LoadUserConfig() *UserConfig {
 			Port:     getEnv("AUTH_SERVER_PORT", "50051"),
 			HTTPPort: getEnv("AUTH_HTTP_PORT", "8082"),
 			Name:     "user-service",
+			LogLevel: getEnv("LOG_LEVEL", "info"),
 		},
 		Database: dbConfig,
 		Redis:    redisConfig,

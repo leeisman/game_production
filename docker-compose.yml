@@ -35,20 +35,6 @@ services:
       timeout: 3s
       retries: 5
 
-  # NATS Message Queue
-  nats:
-    image: nats:2.10-alpine
-    container_name: casino_nats
-    ports:
-      - "4222:4222" # Client connections
-      - "8222:8222" # HTTP monitoring
-    command: "-js -m 8222" # Enable JetStream and monitoring
-    healthcheck:
-      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz" ]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
   # Nacos Service Discovery
   nacos:
     image: nacos/nacos-server:v2.2.3
@@ -66,84 +52,6 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-
-  # Auth Service
-  auth_service:
-    build:
-      context: .
-      dockerfile: deployments/docker/Dockerfile.auth
-    container_name: casino_auth
-    ports:
-      - "50051:50051"
-    environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=casino_user
-      - DB_PASSWORD=casino_pass
-      - DB_NAME=casino_db
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - JWT_SECRET=your-secret-key-change-in-production
-      - NACOS_HOST=nacos
-      - NACOS_PORT=8848
-      - AUTH_SERVER_PORT=50051
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      nacos:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # Player Service
-  player_service:
-    build:
-      context: .
-      dockerfile: deployments/docker/Dockerfile.player
-    container_name: casino_player
-    ports:
-      - "50052:50052"
-    environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=casino_user
-      - DB_PASSWORD=casino_pass
-      - DB_NAME=casino_db
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # Wallet Service
-  wallet_service:
-    build:
-      context: .
-      dockerfile: deployments/docker/Dockerfile.wallet
-    container_name: casino_wallet
-    ports:
-      - "50053:50053"
-    environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=casino_user
-      - DB_PASSWORD=casino_pass
-      - DB_NAME=casino_db
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - NATS_URL=nats://nats:4222
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
-    restart: unless-stopped
 
 volumes:
   postgres_data:

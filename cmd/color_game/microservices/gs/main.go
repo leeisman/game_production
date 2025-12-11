@@ -14,7 +14,6 @@ import (
 
 	"github.com/frankieli/game_product/internal/config"
 	colorgameGSGrpc "github.com/frankieli/game_product/internal/modules/color_game/gs/adapter/grpc"
-	colorgameGSDomain "github.com/frankieli/game_product/internal/modules/color_game/gs/domain"
 	colorgameGSRepo "github.com/frankieli/game_product/internal/modules/color_game/gs/repository/db"
 	colorgameGSMemory "github.com/frankieli/game_product/internal/modules/color_game/gs/repository/memory"
 	colorgameGSUseCase "github.com/frankieli/game_product/internal/modules/color_game/gs/usecase"
@@ -47,9 +46,6 @@ func main() {
 		logger.FatalGlobal().Err(err).Msg("Failed to connect to database")
 	}
 	logger.InfoGlobal().Msg("✅ Database connected")
-
-	// Auto Migrate
-	db.AutoMigrate(&colorgameGSDomain.BetOrder{})
 
 	// 3. Initialize Nacos for Service Discovery
 	nacosClient, err := discovery.NewNacosClient(cfg.Nacos.Host, cfg.Nacos.Port, cfg.Nacos.NamespaceID)

@@ -22,10 +22,10 @@ type Handler struct {
 func NewHandler(userUC *usecase.UserUseCase) *Handler {
 	return &Handler{
 		userUC: userUC,
-		// Login: 100 RPS, Burst 50
-		loginLimiter: rate.NewLimiter(rate.Limit(100), 50),
-		// Register: 50 RPS, Burst 20 (Register is heavier and less frequent)
-		registerLimiter: rate.NewLimiter(rate.Limit(50), 20),
+		// Login: 5000 RPS, Burst 1000 (Optimization for 10k Load Test)
+		loginLimiter: rate.NewLimiter(rate.Limit(5000), 1000),
+		// Register: 1000 RPS, Burst 500
+		registerLimiter: rate.NewLimiter(rate.Limit(1000), 500),
 	}
 }
 

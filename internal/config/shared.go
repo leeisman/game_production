@@ -8,6 +8,7 @@ type ServerConfig struct {
 	Port     string // gRPC port
 	HTTPPort string // HTTP port for independent service
 	Name     string // Service Name for Nacos
+	LogLevel string // debug, info, warn, error
 }
 
 type DatabaseConfig struct {
