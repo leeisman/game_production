@@ -4,6 +4,7 @@ package base
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand"
 	"sync"
 	"time"
@@ -260,5 +261,44 @@ func (c *BaseClient) CollectPerformance(ctx context.Context, serviceName string,
 		DurationSeconds: duration,
 	}
 
-	return client.CollectPerformanceData(c.withRequestID(ctx), req)
+	stream, err := client.CollectPerformanceData(c.withRequestID(ctx), req)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &pbAdmin.CollectResp{}
+
+	for {
+		chunk, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("stream recv failed: %w", err)
+		}
+
+		if chunk.Timestamp != 0 {
+			result.Timestamp = chunk.Timestamp
+		}
+		if chunk.ServiceName != "" {
+			result.ServiceName = chunk.ServiceName
+		}
+
+		switch chunk.DataType {
+		case pbAdmin.CollectRespChunk_CPU_PROFILE:
+			result.CpuProfile = append(result.CpuProfile, chunk.Data...)
+		case pbAdmin.CollectRespChunk_TRACE_DATA:
+			result.TraceData = append(result.TraceData, chunk.Data...)
+		case pbAdmin.CollectRespChunk_HEAP_SNAPSHOT:
+			result.HeapSnapshot = append(result.HeapSnapshot, chunk.Data...)
+		case pbAdmin.CollectRespChunk_GOROUTINE_DUMP:
+			result.GoroutineDump = append(result.GoroutineDump, chunk.Data...)
+		case pbAdmin.CollectRespChunk_BLOCK_PROFILE:
+			result.BlockProfile = append(result.BlockProfile, chunk.Data...)
+		case pbAdmin.CollectRespChunk_MUTEX_PROFILE:
+			result.MutexProfile = append(result.MutexProfile, chunk.Data...)
+		}
+	}
+
+	return result, nil
 }

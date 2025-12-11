@@ -40,4 +40,6 @@ message CollectResp {
   bytes goroutine_dump = 4;   // Binary/Text data for Goroutine stack traces
   int64 timestamp = 5;        // Unix timestamp of when collection finished
   string service_name = 6;    // Name of the service (e.g., "user-service")
+  bytes block_profile = 7;    // Binary data for runtime Block profile
+  bytes mutex_profile = 8;    // Binary data for runtime Mutex profile
 }

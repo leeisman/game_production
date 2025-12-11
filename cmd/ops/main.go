@@ -345,6 +345,8 @@ func handleRecordPerformance(c *gin.Context) {
 		"trace":     writeFile("trace.out", resp.TraceData),
 		"heap":      writeFile("heap.prof", resp.HeapSnapshot),
 		"goroutine": writeFile("goroutine.prof", resp.GoroutineDump),
+		"block":     writeFile("block.prof", resp.BlockProfile),
+		"mutex":     writeFile("mutex.prof", resp.MutexProfile),
 	}
 
 	c.JSON(200, gin.H{

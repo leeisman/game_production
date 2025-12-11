@@ -24,7 +24,7 @@ const _ = grpc.SupportPackageIsVersion7
 type AdminServiceClient interface {
 	// CollectPerformanceData captures CPU profile, Heap snapshot, Goroutine dump, and Trace
 	// for a specified duration and returns them as binary data.
-	CollectPerformanceData(ctx context.Context, in *CollectReq, opts ...grpc.CallOption) (*CollectResp, error)
+	CollectPerformanceData(ctx context.Context, in *CollectReq, opts ...grpc.CallOption) (AdminService_CollectPerformanceDataClient, error)
 }
 
 type adminServiceClient struct {
@@ -35,13 +35,36 @@ func NewAdminServiceClient(cc grpc.ClientConnInterface) AdminServiceClient {
 	return &adminServiceClient{cc}
 }
 
-func (c *adminServiceClient) CollectPerformanceData(ctx context.Context, in *CollectReq, opts ...grpc.CallOption) (*CollectResp, error) {
-	out := new(CollectResp)
-	err := c.cc.Invoke(ctx, "/admin.AdminService/CollectPerformanceData", in, out, opts...)
+func (c *adminServiceClient) CollectPerformanceData(ctx context.Context, in *CollectReq, opts ...grpc.CallOption) (AdminService_CollectPerformanceDataClient, error) {
+	stream, err := c.cc.NewStream(ctx, &AdminService_ServiceDesc.Streams[0], "/admin.AdminService/CollectPerformanceData", opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &adminServiceCollectPerformanceDataClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type AdminService_CollectPerformanceDataClient interface {
+	Recv() (*CollectRespChunk, error)
+	grpc.ClientStream
+}
+
+type adminServiceCollectPerformanceDataClient struct {
+	grpc.ClientStream
+}
+
+func (x *adminServiceCollectPerformanceDataClient) Recv() (*CollectRespChunk, error) {
+	m := new(CollectRespChunk)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // AdminServiceServer is the server API for AdminService service.
@@ -50,7 +73,7 @@ func (c *adminServiceClient) CollectPerformanceData(ctx context.Context, in *Col
 type AdminServiceServer interface {
 	// CollectPerformanceData captures CPU profile, Heap snapshot, Goroutine dump, and Trace
 	// for a specified duration and returns them as binary data.
-	CollectPerformanceData(context.Context, *CollectReq) (*CollectResp, error)
+	CollectPerformanceData(*CollectReq, AdminService_CollectPerformanceDataServer) error
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -58,8 +81,8 @@ type AdminServiceServer interface {
 type UnimplementedAdminServiceServer struct {
 }
 
-func (UnimplementedAdminServiceServer) CollectPerformanceData(context.Context, *CollectReq) (*CollectResp, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CollectPerformanceData not implemented")
+func (UnimplementedAdminServiceServer) CollectPerformanceData(*CollectReq, AdminService_CollectPerformanceDataServer) error {
+	return status.Errorf(codes.Unimplemented, "method CollectPerformanceData not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 
@@ -74,22 +97,25 @@ func RegisterAdminServiceServer(s grpc.ServiceRegistrar, srv AdminServiceServer)
 	s.RegisterService(&AdminService_ServiceDesc, srv)
 }
 
-func _AdminService_CollectPerformanceData_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CollectReq)
-	if err := dec(in); err != nil {
-		return nil, err
+func _AdminService_CollectPerformanceData_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(CollectReq)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(AdminServiceServer).CollectPerformanceData(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/admin.AdminService/CollectPerformanceData",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AdminServiceServer).CollectPerformanceData(ctx, req.(*CollectReq))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(AdminServiceServer).CollectPerformanceData(m, &adminServiceCollectPerformanceDataServer{stream})
+}
+
+type AdminService_CollectPerformanceDataServer interface {
+	Send(*CollectRespChunk) error
+	grpc.ServerStream
+}
+
+type adminServiceCollectPerformanceDataServer struct {
+	grpc.ServerStream
+}
+
+func (x *adminServiceCollectPerformanceDataServer) Send(m *CollectRespChunk) error {
+	return x.ServerStream.SendMsg(m)
 }
 
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
@@ -98,12 +124,13 @@ func _AdminService_CollectPerformanceData_Handler(srv interface{}, ctx context.C
 var AdminService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "admin.AdminService",
 	HandlerType: (*AdminServiceServer)(nil),
-	Methods: []grpc.MethodDesc{
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "CollectPerformanceData",
-			Handler:    _AdminService_CollectPerformanceData_Handler,
+			StreamName:    "CollectPerformanceData",
+			Handler:       _AdminService_CollectPerformanceData_Handler,
+			ServerStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "shared/proto/admin/admin.proto",
 }
