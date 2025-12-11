@@ -12,7 +12,7 @@ interface ServiceInfo {
 const services = ref<ServiceInfo[]>([])
 const selectedService = ref('')
 const selectedInstance = ref('')
-const duration = ref(30)
+const duration = ref(60)
 const loading = ref(false)
 const recording = ref(false)
 const error = ref('')
@@ -286,7 +286,7 @@ onMounted(() => {
                             <td class="px-6 py-4 whitespace-nowrap">
                                 <div class="flex flex-wrap gap-2">
                                      <template v-for="(path, type) in item.files" :key="type">
-                                        <a v-if="['cpu', 'heap'].includes(String(type))" 
+                                        <a v-if="['cpu', 'heap', 'trace', 'block', 'mutex'].includes(String(type))" 
                                            :href="getAnalysisUrl(path)"
                                            target="_blank"
                                            class="px-2 py-1 text-xs font-semibold rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 hover:bg-indigo-200 dark:hover:bg-indigo-800 uppercase flex items-center gap-1 border border-indigo-200 dark:border-indigo-800 bg-opacity-50"

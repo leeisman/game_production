@@ -100,16 +100,15 @@ func main() {
 		// RPC Call (payload contains project)
 		api.POST("/grpc_call", handleGenericCall)
 
-
 		// Performance Profiling
 		api.POST("/performance/record", handleRecordPerformance)
 		api.GET("/performance/history", handleListPerformanceHistory)
 		api.DELETE("/performance/history", handleDeletePerformanceHistory)
-		
+
 		// Full Web UI Proxy (go tool pprof -http)
 		// /api/performance/ui/:key/*path
 		api.Any("/performance/ui/:key/*path", handlePprofProxy)
-		
+
 		// Serve downloaded profiles
 		api.Static("/performance/download", "./storage/pprof")
 	}
@@ -319,10 +318,10 @@ func handleRecordPerformance(c *gin.Context) {
 	if safeInstance == "" {
 		safeInstance = "unknown"
 	}
-	
+
 	// Folder format: {timestamp}__{service}__{instance}
 	baseDir := fmt.Sprintf("./storage/pprof/%d__%s__%s", timestamp, body.Service, safeInstance)
-	if err := os.MkdirAll(baseDir, 0755); err != nil {
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		c.JSON(500, gin.H{"error": "Failed to create storage dir"})
 		return
 	}
@@ -333,7 +332,7 @@ func handleRecordPerformance(c *gin.Context) {
 			return ""
 		}
 		path := filepath.Join(baseDir, name)
-		if err := os.WriteFile(path, data, 0644); err != nil {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
 			logger.WarnGlobal().Err(err).Msgf("Failed to write file %s", name)
 			return ""
 		}
@@ -360,7 +359,7 @@ func handleRecordPerformance(c *gin.Context) {
 func handleListPerformanceHistory(c *gin.Context) {
 	baseDir := "./storage/pprof"
 	// Ensure dir exists
-	os.MkdirAll(baseDir, 0755)
+	os.MkdirAll(baseDir, 0o755)
 
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
@@ -418,7 +417,7 @@ func handleListPerformanceHistory(c *gin.Context) {
 			Files:       files,
 		})
 	}
-	
+
 	c.JSON(200, history)
 }
 
@@ -489,16 +488,26 @@ func GetOrStartPprofSession(targetPath string) (int, error) {
 		return 0, err
 	}
 
-	// go tool pprof -http=localhost:PORT -no_browser {file}
-	cmd := exec.Command("go", "tool", "pprof", fmt.Sprintf("-http=localhost:%d", port), "-no_browser", targetPath)
+	var cmd *exec.Cmd
+	// Detect file type to choose the right tool
+	if strings.HasSuffix(targetPath, "trace.out") {
+		// go tool trace -http=localhost:PORT {file}
+		// Note: trace command might try to open a browser window on local dev environment.
+		// We use -http flag to bind to specific port.
+		cmd = exec.Command("go", "tool", "trace", fmt.Sprintf("-http=localhost:%d", port), targetPath)
+	} else {
+		// go tool pprof -http=localhost:PORT -no_browser {file}
+		cmd = exec.Command("go", "tool", "pprof", fmt.Sprintf("-http=localhost:%d", port), "-no_browser", targetPath)
+	}
+
 	// We should probably set PPROF_TMPDIR or something if needed, but default is fine.
 
 	if err := cmd.Start(); err != nil {
-		return 0, fmt.Errorf("failed to start pprof: %v", err)
+		return 0, fmt.Errorf("failed to start tool: %v", err)
 	}
 
-	// Give it a moment to start listening
-	time.Sleep(500 * time.Millisecond) // Naive wait
+	// Give it a moment to start listening (trace parsing can be slow)
+	time.Sleep(1500 * time.Millisecond)
 
 	pprofSessions[targetPath] = &PprofSession{
 		Port:       port,
@@ -561,34 +570,34 @@ func getFreePort() (int, error) {
 
 func handlePprofProxy(c *gin.Context) {
 	// URL: /api/performance/ui/:session/*path
-	// session ID is essentially the relative path to the file, 
+	// session ID is essentially the relative path to the file,
 	// but we encoded it to be URL safe. Or just pass "timestamp__service__instance/filename" directly?
 	// Gin :session will match until next slash.
-	// But our "ID" contains slashes (folder/file). 
-	// So we should expect encoded session ID. 
+	// But our "ID" contains slashes (folder/file).
+	// So we should expect encoded session ID.
 	// Let's assume frontend calls: /api/performance/ui?file={path}&path={path_in_ui}
 	// Or define route as /api/performance/ui/*filepath
 	// But pprof UI makes requests to root relative paths e.g. /ui/flamegraph.
-	
+
 	// Better strategy:
 	// Frontend opens: /api/performance/ui/view?file={path} in new tab.
 	// This handler renders a page that REWRITES links? No.
-	
+
 	// Best Strategy:
 	// We need a path prefix proxy.
 	// /api/performance/ui/<safe_file_key>/...
 	// <safe_file_key> -> base64(path)
-	
+
 	safeKey := c.Param("key")
 	proxyPath := c.Param("path")
-	
+
 	decodedBytes, err := base64.RawURLEncoding.DecodeString(safeKey)
 	if err != nil {
 		c.String(400, "Invalid key")
 		return
 	}
 	relPath := string(decodedBytes)
-	
+
 	// Security:
 	absStorage, _ := filepath.Abs("./storage/pprof")
 	targetPath := filepath.Join(absStorage, relPath)
@@ -596,13 +605,13 @@ func handlePprofProxy(c *gin.Context) {
 		c.String(403, "Access denied")
 		return
 	}
-	
+
 	port, err := GetOrStartPprofSession(targetPath)
 	if err != nil {
 		c.String(500, "Failed to start pprof: "+err.Error())
 		return
 	}
-	
+
 	// Reverse Proxy
 	director := func(req *http.Request) {
 		req.URL.Scheme = "http"
@@ -610,14 +619,14 @@ func handlePprofProxy(c *gin.Context) {
 		// Strip the prefix (/api/performance/ui/<key>)
 		// proxyPath already has the rest
 		req.URL.Path = proxyPath
-		
-		// pprof UI assets sometimes refer to root. 
+
+		// pprof UI assets sometimes refer to root.
 		// E.g. <script src="/ui/jquery.js">.
 		// If we serve under /api/.../ui/<key>/, the browser will request /api/.../ui/<key>/ui/jquery.js
 		// So proxyPath will be /ui/jquery.js. This maps correctly to localhost:port/ui/jquery.js.
 		// PERFECT.
 	}
-	
+
 	proxy := &httputil.ReverseProxy{
 		Director: director,
 		ModifyResponse: func(r *http.Response) error {
@@ -625,7 +634,7 @@ func handlePprofProxy(c *gin.Context) {
 			if loc := r.Header.Get("Location"); loc != "" {
 				// If pprof redirects to absolute path (e.g. "/ui"), rewrite it to be under our proxy path
 				if strings.HasPrefix(loc, "/") {
-					r.Header.Set("Location", "/api/performance/ui/" + safeKey + loc)
+					r.Header.Set("Location", "/api/performance/ui/"+safeKey+loc)
 				}
 			}
 			return nil
@@ -646,13 +655,13 @@ func handleDeletePerformanceHistory(c *gin.Context) {
 
 	baseDir, _ := filepath.Abs("./storage/pprof")
 	deletedCount := 0
-	
+
 	for _, folder := range body.Folders {
 		// Security Check: simple basename check
 		if strings.Contains(folder, "..") || strings.Contains(folder, "/") || strings.Contains(folder, "\\") {
 			continue
 		}
-		
+
 		targetPath := filepath.Join(baseDir, folder)
 		// Double check prefix
 		if !strings.HasPrefix(targetPath, baseDir) {
@@ -661,12 +670,12 @@ func handleDeletePerformanceHistory(c *gin.Context) {
 
 		if err := os.RemoveAll(targetPath); err == nil {
 			deletedCount++
-			
+
 			// Also clean up any active pprof session
 			pprofMutex.Lock()
 			// Sessions keys are "folder/file". We need to find keys starting with folder.
 			for k, s := range pprofSessions {
-				if strings.HasPrefix(k, folder+"/") || strings.HasPrefix(k, folder+"\\")  {
+				if strings.HasPrefix(k, folder+"/") || strings.HasPrefix(k, folder+"\\") {
 					if s.Cmd.Process != nil {
 						s.Cmd.Process.Kill()
 					}
@@ -683,7 +692,6 @@ func handleDeletePerformanceHistory(c *gin.Context) {
 // ... initRegistry ...
 func initRegistry() {
 	methodRegistry = make(map[string]GenericHandler)
-
 
 	methodRegistry["ValidateToken"] = func(ctx context.Context, p *ProjectContext, payload []byte) (interface{}, error) {
 		var req struct {

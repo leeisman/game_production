@@ -8,7 +8,7 @@ option go_package = "github.com/frankieli/game_product/shared/proto/admin";
 service AdminService {
   // CollectPerformanceData captures CPU profile, Heap snapshot, Goroutine dump, and Trace
   // for a specified duration and returns them as binary data.
-  rpc CollectPerformanceData(CollectReq) returns (CollectResp);
+  rpc CollectPerformanceData(CollectReq) returns (stream CollectRespChunk);
 }
 
 message CollectReq {
@@ -16,6 +16,23 @@ message CollectReq {
   int32 duration_seconds = 1; 
 }
 
+message CollectRespChunk {
+  enum DataType {
+    UNKNOWN = 0;
+    CPU_PROFILE = 1;
+    TRACE_DATA = 2;
+    HEAP_SNAPSHOT = 3;
+    GOROUTINE_DUMP = 4;
+    BLOCK_PROFILE = 5;
+    MUTEX_PROFILE = 6;
+  }
+  DataType data_type = 1;    // Type of data in this chunk
+  bytes data = 2;            // Binary chunk data
+  int64 timestamp = 3;       // Unix timestamp (sent in at least one chunk)
+  string service_name = 4;   // Name of the service (sent in at least one chunk)
+}
+
+// CollectResp is the aggregated result reconstructed from chunks (Client-side use)
 message CollectResp {
   bytes cpu_profile = 1;      // Binary data for pprof CPU profile
   bytes trace_data = 2;       // Binary data for runtime execution trace

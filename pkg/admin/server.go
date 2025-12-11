@@ -2,9 +2,9 @@ package admin
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
 	"time"
@@ -22,8 +22,8 @@ func NewServer() *Server {
 	return &Server{}
 }
 
-// CollectPerformanceData captures performance metrics
-func (s *Server) CollectPerformanceData(ctx context.Context, req *pb.CollectReq) (*pb.CollectResp, error) {
+// CollectPerformanceData captures performance metrics and streams them back
+func (s *Server) CollectPerformanceData(req *pb.CollectReq, stream pb.AdminService_CollectPerformanceDataServer) error {
 	duration := time.Duration(req.DurationSeconds) * time.Second
 	if duration <= 0 {
 		duration = 30 * time.Second
@@ -34,21 +34,34 @@ func (s *Server) CollectPerformanceData(ctx context.Context, req *pb.CollectReq)
 	var traceBuf bytes.Buffer
 	var heapBuf bytes.Buffer
 	var goroutineBuf bytes.Buffer
+	var blockBuf bytes.Buffer // New: IO/Blocking
+	var mutexBuf bytes.Buffer // New: Lock Contention
+
+	// A. Enable Profiles (Block & Mutex are disabled by default)
+	// 1ns = Capture everything (High overhead, perfect for debugging)
+	runtime.SetBlockProfileRate(1)
+	// 1 = Capture every contention event (Default is 0)
+	runtime.SetMutexProfileFraction(1)
+
+	// Defer: RESTORE to 0 (Disable) to prevent production performance hit
+	defer func() {
+		runtime.SetBlockProfileRate(0)
+		runtime.SetMutexProfileFraction(0)
+	}()
 
 	// 1. Start CPU Profiling
 	if err := pprof.StartCPUProfile(&cpuBuf); err != nil {
-		return nil, fmt.Errorf("could not start CPU profile: %v", err)
+		return fmt.Errorf("could not start CPU profile: %v", err)
 	}
 
 	// 2. Start Tracing
 	if err := trace.Start(&traceBuf); err != nil {
-		// Stop CPU profile if trace fails
 		pprof.StopCPUProfile()
-		return nil, fmt.Errorf("could not start trace: %v", err)
+		return fmt.Errorf("could not start trace: %v", err)
 	}
 
 	// 3. Wait for duration
-	// We use a select to handle context cancellation (client disconnect)
+	ctx := stream.Context()
 	select {
 	case <-time.After(duration):
 		// Completed successfully
@@ -56,41 +69,75 @@ func (s *Server) CollectPerformanceData(ctx context.Context, req *pb.CollectReq)
 		// Client cancelled
 		pprof.StopCPUProfile()
 		trace.Stop()
-		return nil, ctx.Err()
+		return ctx.Err()
 	}
 
 	// 4. Stop Profiling & Tracing
 	pprof.StopCPUProfile()
 	trace.Stop()
 
-	// 5. Capture Heap Snapshot
+	// 5. Capture Snapshots
 	if err := pprof.WriteHeapProfile(&heapBuf); err != nil {
-		return nil, fmt.Errorf("could not write heap profile: %v", err)
+		return fmt.Errorf("could not write heap profile: %v", err)
+	}
+	if p := pprof.Lookup("goroutine"); p != nil {
+		p.WriteTo(&goroutineBuf, 0)
 	}
 
-	// 6. Capture Goroutine Dump
-	if p := pprof.Lookup("goroutine"); p != nil {
-		if err := p.WriteTo(&goroutineBuf, 1); err != nil { // 1 = debug level (human readable?) but here we want binary/standard format?
-			// Actually WriteTo writes text for goroutine if debug > 0.
-			// Ideally we want stack traces. debug=1 is text. debug=2 is stack trace. 
-			// Standard pprof tool expects binary usually, but for goroutines strictly speaking it parses text too?
-			// Let's use debug=0 for binary proto format if supported, but Lookup.WriteTo might not support proto format for all profiles.
-			// For "goroutine", debug=0 is actually the binary encoded profile suitable for `go tool pprof`.
-			if err := p.WriteTo(&goroutineBuf, 0); err != nil {
-				return nil, fmt.Errorf("could not write goroutine profile: %v", err)
+	// New: Capture Block Profile (IO Wait)
+	if p := pprof.Lookup("block"); p != nil {
+		p.WriteTo(&blockBuf, 0)
+	}
+	// New: Capture Mutex Profile (Lock Wait)
+	if p := pprof.Lookup("mutex"); p != nil {
+		p.WriteTo(&mutexBuf, 0)
+	}
+
+	hostname, _ := os.Hostname()
+	timestamp := time.Now().Unix()
+
+	// Helper to send data in chunks
+	sendData := func(dataType pb.CollectRespChunk_DataType, data []byte) error {
+		const chunkSize = 32 * 1024
+		for i := 0; i < len(data); i += chunkSize {
+			end := i + chunkSize
+			if end > len(data) {
+				end = len(data)
+			}
+			chunk := &pb.CollectRespChunk{
+				DataType:    dataType,
+				Data:        data[i:end],
+				Timestamp:   timestamp,
+				ServiceName: hostname,
+			}
+			if err := stream.Send(chunk); err != nil {
+				return err
 			}
 		}
+		return nil
 	}
 
-	// Get Hostname/Service Name (Simple approach)
-	hostname, _ := os.Hostname()
+	// Send all data types
+	if err := sendData(pb.CollectRespChunk_CPU_PROFILE, cpuBuf.Bytes()); err != nil {
+		return err
+	}
+	if err := sendData(pb.CollectRespChunk_TRACE_DATA, traceBuf.Bytes()); err != nil {
+		return err
+	}
+	if err := sendData(pb.CollectRespChunk_HEAP_SNAPSHOT, heapBuf.Bytes()); err != nil {
+		return err
+	}
+	if err := sendData(pb.CollectRespChunk_GOROUTINE_DUMP, goroutineBuf.Bytes()); err != nil {
+		return err
+	}
 
-	return &pb.CollectResp{
-		CpuProfile:    cpuBuf.Bytes(),
-		TraceData:     traceBuf.Bytes(),
-		HeapSnapshot:  heapBuf.Bytes(),
-		GoroutineDump: goroutineBuf.Bytes(),
-		Timestamp:     time.Now().Unix(),
-		ServiceName:   hostname,
-	}, nil
+	// Send New Profiles
+	if err := sendData(pb.CollectRespChunk_BLOCK_PROFILE, blockBuf.Bytes()); err != nil {
+		return err
+	}
+	if err := sendData(pb.CollectRespChunk_MUTEX_PROFILE, mutexBuf.Bytes()); err != nil {
+		return err
+	}
+
+	return nil
 }
